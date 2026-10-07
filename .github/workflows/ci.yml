@@ -34,6 +34,15 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Check that migrations match the schema
+        run: |
+          npm run db:generate
+          if [ -n "$(git status --porcelain drizzle/)" ]; then
+            echo "::error::src/db/schema/ has changes not generated in drizzle/: run 'npm run db:generate' and commit the migration."
+            git status --porcelain drizzle/
+            exit 1
+          fi
+      - run: npm run db:migrate:test
       - run: npm test
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
