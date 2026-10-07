@@ -220,6 +220,23 @@ describe("tenants", () => {
   });
 });
 
+describe("foreign keys", () => {
+  // 'r' = RESTRICT. The deletion tests above would also pass with NO ACTION (the default):
+  // check the declared action explicitly.
+  it("are all declared ON DELETE RESTRICT", async () => {
+    const rows = await testSql()`
+      select conname, conrelid::regclass::text as table_name, confdeltype
+      from pg_constraint
+      where contype = 'f' and connamespace = 'public'::regnamespace
+      order by conname`;
+    expect(rows).toEqual([
+      { conname: "tenant_modules_module_id_modules_id_fk", table_name: "tenant_modules", confdeltype: "r" },
+      { conname: "tenant_modules_tenant_id_tenants_id_fk", table_name: "tenant_modules", confdeltype: "r" },
+      { conname: "users_tenant_id_tenants_id_fk", table_name: "users", confdeltype: "r" },
+    ]);
+  });
+});
+
 describe("users", () => {
   it("default to status INVITED", async () => {
     const tenant = await insertTenant();
