@@ -1,10 +1,13 @@
 import { z } from "zod";
 
-import { unicodeTrim } from "./text";
+import { tooLongMessage, unicodeTrim } from "./text";
 
 // ASCII only: `[0-9]` and `[A-Z]` never match other Unicode digits or letters.
 const VAT_NUMBER_FORMAT = /^[0-9]{11}$/;
 const TAX_CODE_FORMAT = /^(?:[0-9]{11}|[A-Z0-9]{16})$/;
+
+/** Anti-abuse cap on the raw input (before trimming): generous for 11 or 16 characters. */
+export const TAX_ID_MAX_RAW_LENGTH = 64;
 
 /** Partita IVA normalisation: trim only (no "IT" prefix removal, no inner spaces removal). */
 export function normalizeVatNumber(value: string): string {
@@ -44,6 +47,7 @@ function hasValidVatCheckDigit(digits: string): boolean {
 
 /** True for exactly 11 digits (after trim) with a correct check digit. */
 export function isValidVatNumber(value: string): boolean {
+  if (value.length > TAX_ID_MAX_RAW_LENGTH) return false;
   const normalized = normalizeVatNumber(value);
   return VAT_NUMBER_FORMAT.test(normalized) && hasValidVatCheckDigit(normalized);
 }
@@ -54,12 +58,18 @@ export function isValidVatNumber(value: string): boolean {
  * 11-digit CF is not subject to the VAT algorithm.
  */
 export function isValidTaxCode(value: string): boolean {
-  return TAX_CODE_FORMAT.test(normalizeTaxCode(value));
+  return value.length <= TAX_ID_MAX_RAW_LENGTH && TAX_CODE_FORMAT.test(normalizeTaxCode(value));
 }
+
+const maxRawLength = {
+  message: tooLongMessage(TAX_ID_MAX_RAW_LENGTH),
+  abort: true,
+} as const;
 
 /** Partita IVA: trimmed, 11 digits, valid check digit. Outputs the normalised value. */
 export const vatNumberSchema = z
   .string()
+  .max(TAX_ID_MAX_RAW_LENGTH, maxRawLength)
   .overwrite(normalizeVatNumber)
   .regex(VAT_NUMBER_FORMAT, "La partita IVA deve essere composta da 11 cifre")
   .refine((value) => !VAT_NUMBER_FORMAT.test(value) || hasValidVatCheckDigit(value), {
@@ -69,5 +79,6 @@ export const vatNumberSchema = z
 /** Codice fiscale: trimmed, upper-cased, 11 digits or 16 alphanumerics. Outputs the normalised value. */
 export const taxCodeSchema = z
   .string()
+  .max(TAX_ID_MAX_RAW_LENGTH, maxRawLength)
   .overwrite(normalizeTaxCode)
   .regex(TAX_CODE_FORMAT, "Il codice fiscale deve essere di 11 cifre o di 16 caratteri alfanumerici");

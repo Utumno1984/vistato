@@ -172,6 +172,49 @@ describe("createTenant", () => {
     expect(await tenantCount()).toBe(0);
   });
 
+  it.each([
+    ["a lone surrogate", `Acme${String.fromCharCode(0xd800)}`],
+    ["only a combining accent", cp(0x301)],
+    ["only punctuation", ".-&"],
+    ["a right-to-left override", `Acme ${cp(0x202e)}l.r.S`],
+    ["a first strong isolate", `Acme${cp(0x2068)}S.r.l.`],
+    ["a line separator", `Acme${cp(0x2028)}S.r.l.`],
+    ["a paragraph separator", `Acme${cp(0x2029)}S.r.l.`],
+    ["1001 characters", "a".repeat(1001)],
+    ["5 million characters", `a${" ".repeat(5_000_000)}a`],
+  ])("rejects a business name with %s and inserts nothing", async (_label, businessName) => {
+    const error = await expectError(create({ businessName, vatNumber: "12345678903" }), ValidationError);
+    expect(error.fields).toEqual(["businessName"]);
+    expect(await tenantCount()).toBe(0);
+  });
+
+  it("stores the business name in NFC", async () => {
+    const tenant = await create({ businessName: `Societa${cp(0x300)} Alfa`, vatNumber: "12345678903" });
+    const [row] = await testSql()`select business_name from tenants where id = ${tenant.id}`;
+    expect(row.business_name).toBe(`Societ${cp(0xe0)} Alfa`);
+    expect(tenant.businessName).toBe(row.business_name);
+  });
+
+  it.each([
+    "Società Àlfa d'Italia & C. S.n.c.",
+    `Acme${NBSP}S.r.l.`,
+    cp(0x6771, 0x4eac, 0x5546, 0x4e8b, 0x682a, 0x5f0f, 0x4f1a, 0x793e),
+    "a".repeat(1000),
+  ])("stores the legitimate business name %j unchanged", async (businessName) => {
+    const tenant = await create({ businessName, vatNumber: "12345678903" });
+    const [row] = await testSql()`select business_name from tenants where id = ${tenant.id}`;
+    expect(row.business_name).toBe(businessName);
+  });
+
+  it.each([
+    ["vatNumber", { vatNumber: `${" ".repeat(54)}12345678903` }],
+    ["taxCode", { taxCode: `${" ".repeat(49)}RSSMRA80A01H501U` }],
+  ])("rejects a %s longer than 64 characters before trimming", async (field, ids) => {
+    const error = await expectError(create({ businessName: "Acme S.r.l.", ...ids }), ValidationError);
+    expect(error.fields).toEqual([field]);
+    expect(await tenantCount()).toBe(0);
+  });
+
   it("documents why: the database CHECK alone accepts a business name of tabs and NBSPs", async () => {
     // btrim removes only ASCII spaces, so this row passes tenants_business_name_not_blank.
     await testSql()`insert into tenants (business_name, vat_number) values (${`\t${NBSP}\n`}, '12345678903')`;

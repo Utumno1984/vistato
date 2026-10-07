@@ -19,6 +19,12 @@ import { requiredTextSchema } from "@/lib/validation/text";
 const VAT_NUMBER_UNIQUE_CONSTRAINT = "tenants_vat_number_unique";
 
 /**
+ * Technical anti-abuse cap on the raw business name (before trimming), not a
+ * domain rule: no business length limit has been decided yet.
+ */
+export const BUSINESS_NAME_MAX_RAW_LENGTH = 1000;
+
+/**
  * Input of `createTenant`. Unknown keys (e.g. `id`, `status`, `createdAt`) are
  * stripped: a new tenant is always ACTIVE, with ID and timestamps from the database.
  * `vatNumber` and `taxCode` are optional (null/undefined = absent) but at least one
@@ -26,7 +32,10 @@ const VAT_NUMBER_UNIQUE_CONSTRAINT = "tenants_vat_number_unique";
  */
 export const createTenantInputSchema = z
   .object({
-    businessName: requiredTextSchema("La ragione sociale è obbligatoria"),
+    businessName: requiredTextSchema({
+      requiredMessage: "La ragione sociale è obbligatoria",
+      maxLength: BUSINESS_NAME_MAX_RAW_LENGTH,
+    }),
     vatNumber: vatNumberSchema.nullish(),
     taxCode: taxCodeSchema.nullish(),
   })

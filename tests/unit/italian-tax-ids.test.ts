@@ -132,6 +132,29 @@ describe("tax identifiers and invisible or control characters", () => {
     expect(vatNumberSchema.safeParse(`123456${zwsp}78903`).success).toBe(false);
   });
 
+  it("caps the raw length at 64 before trimming, and rejects huge inputs quickly", () => {
+    const padded = (value: string, total: number) => value.padStart(total, " ");
+    expect(vatNumberSchema.parse(padded("12345678903", 64))).toBe("12345678903");
+    expect(taxCodeSchema.parse(padded("RSSMRA80A01H501U", 64))).toBe("RSSMRA80A01H501U");
+    expect(isValidVatNumber(padded("12345678903", 64))).toBe(true);
+    expect(isValidTaxCode(padded("RSSMRA80A01H501U", 64))).toBe(true);
+
+    const tooLongVat = vatNumberSchema.safeParse(padded("12345678903", 65));
+    expect(tooLongVat.error?.issues.map((i) => i.message)).toEqual(["Non può superare 64 caratteri"]);
+    const tooLongCf = taxCodeSchema.safeParse(padded("RSSMRA80A01H501U", 65));
+    expect(tooLongCf.error?.issues.map((i) => i.message)).toEqual(["Non può superare 64 caratteri"]);
+    expect(isValidVatNumber(padded("12345678903", 65))).toBe(false);
+    expect(isValidTaxCode(padded("RSSMRA80A01H501U", 65))).toBe(false);
+
+    const huge = `1${" ".repeat(5_000_000)}1`;
+    const start = performance.now();
+    expect(vatNumberSchema.safeParse(huge).success).toBe(false);
+    expect(taxCodeSchema.safeParse(huge).success).toBe(false);
+    expect(isValidVatNumber(huge)).toBe(false);
+    expect(isValidTaxCode(huge)).toBe(false);
+    expect(performance.now() - start).toBeLessThan(200);
+  });
+
   it.each([0x00, 0x09, 0x1f, 0x7f])("rejects a control character (code point %d) inside the value", (code) => {
     expect(taxCodeSchema.safeParse(`RSSMRA80${cp(code)}A01H501U`).success).toBe(false);
     expect(vatNumberSchema.safeParse(`123456${cp(code)}78903`).success).toBe(false);
