@@ -24,9 +24,15 @@ export function normalizeVatNumber(value: string): string {
   return unicodeTrim(value);
 }
 
-/** Codice fiscale normalisation: trim and upper-case. */
+/**
+ * Codice fiscale normalisation: trim and upper-case the ASCII letters only.
+ * `toUpperCase()` would map some non-ASCII characters to ASCII letters (sharp s to
+ * "SS", the "fi" ligature to "FI", dotless i to "I", long s to "S"), turning an
+ * invalid code into a valid-looking one; leaving them untouched makes the format
+ * check reject them.
+ */
 export function normalizeTaxCode(value: string): string {
-  return unicodeTrim(value).toUpperCase();
+  return unicodeTrim(value).replace(/[a-z]+/g, (letters) => letters.toUpperCase());
 }
 
 /**

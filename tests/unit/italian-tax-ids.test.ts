@@ -8,7 +8,8 @@ import {
   vatNumberSchema,
 } from "@/lib/validation/italian-tax-ids";
 
-const NBSP = String.fromCharCode(160);
+const cp = (...codePoints: number[]) => String.fromCodePoint(...codePoints);
+const NBSP = cp(0xa0);
 
 describe("isValidVatNumber", () => {
   it("accepts a VAT number with a correct check digit", () => {
@@ -44,9 +45,25 @@ describe("isValidVatNumber", () => {
 
   it("rejects non-ASCII digits", () => {
     // Arabic-Indic digits for 12345678903
-    expect(isValidVatNumber("١٢٣٤٥٦٧٨٩٠٣")).toBe(false);
+    const arabicIndic = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 3].map((d) => cp(0x0660 + d)).join("");
+    expect(isValidVatNumber(arabicIndic)).toBe(false);
+    // Fullwidth digits
+    expect(isValidVatNumber("12345678903".replace(/[0-9]/g, (d) => cp(0xff10 + Number(d))))).toBe(false);
   });
 });
+
+/**
+ * Characters that `toUpperCase()` maps to ASCII letters: they must never turn an
+ * invalid tax code into a valid one.
+ */
+const UPPERCASES_TO_ASCII: [string, string][] = [
+  ["sharp s (15 chars, SS when upper-cased)", `rssmra80a01h50${cp(0xdf)}`],
+  ["fi ligature", `RSSMRA80A01H${cp(0xfb01)}01`],
+  ["dotless i", `RSSMRA80A01H501${cp(0x131)}`],
+  ["long s", `RSSMRA80A01H501${cp(0x17f)}`],
+  ["Kelvin sign", `RSSMRA80A01H501${cp(0x212a)}`],
+  ["fullwidth letter", `RSSMRA80A01H501${cp(0xff35)}`],
+];
 
 describe("isValidTaxCode", () => {
   it.each(["RSSMRA80A01H501U", "12345678903", "12345678901", "rssmra80a01h501u", " RSSMRA80A01H501U\n"])(
@@ -56,12 +73,24 @@ describe("isValidTaxCode", () => {
     },
   );
 
-  it.each(["", "RSSMRA80A01H501", "RSSMRA80A01H501UX", "RSSMRA80A01H50-U", "RSSMRA80A01H501 ", "RSSMRA 80A01H501U", "1234567890", "123456789012", "RSSMRA80A01H501È"])(
-    "rejects %j",
-    (value) => {
-      expect(isValidTaxCode(value)).toBe(false);
-    },
-  );
+  it.each([
+    "",
+    "RSSMRA80A01H501",
+    "RSSMRA80A01H501UX",
+    "RSSMRA80A01H50-U",
+    "RSSMRA80A01H501 ",
+    "RSSMRA 80A01H501U",
+    "1234567890",
+    "123456789012",
+    `RSSMRA80A01H501${cp(0xc8)}`, // E with grave accent
+  ])("rejects %j", (value) => {
+    expect(isValidTaxCode(value)).toBe(false);
+  });
+
+  it.each(UPPERCASES_TO_ASCII)("rejects a non-ASCII character that upper-cases to ASCII: %s", (_label, value) => {
+    expect(isValidTaxCode(value)).toBe(false);
+    expect(taxCodeSchema.safeParse(value).success).toBe(false);
+  });
 });
 
 describe("vatNumberSchema", () => {

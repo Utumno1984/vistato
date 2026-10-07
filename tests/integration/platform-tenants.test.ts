@@ -7,7 +7,8 @@ import { tenants } from "@/db/schema";
 import { testDb, testSql } from "../helpers/db";
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const NBSP = String.fromCharCode(160);
+const cp = (...codePoints: number[]) => String.fromCodePoint(...codePoints);
+const NBSP = cp(0xa0);
 
 async function tenantCount(): Promise<number> {
   const [{ count }] = await testSql()`select count(*)::int as count from tenants`;
@@ -104,7 +105,17 @@ describe("createTenant", () => {
     },
   );
 
-  it.each(["RSSMRA80A01H501", "RSSMRA80A01H501UX", "RSSMRA80A01H50-U", ""])("rejects the tax code %j", async (taxCode) => {
+  it.each([
+    "RSSMRA80A01H501",
+    "RSSMRA80A01H501UX",
+    "RSSMRA80A01H50-U",
+    "",
+    // Non-ASCII characters that toUpperCase() turns into ASCII letters
+    `rssmra80a01h50${cp(0xdf)}`, // sharp s, becomes SS
+    `RSSMRA80A01H${cp(0xfb01)}01`, // fi ligature, becomes FI
+    `RSSMRA80A01H501${cp(0x131)}`, // dotless i, becomes I
+    `RSSMRA80A01H501${cp(0x17f)}`, // long s, becomes S
+  ])("rejects the tax code %j", async (taxCode) => {
     const error = await expectError(create({ businessName: "Mario Rossi", taxCode }), ValidationError);
     expect(error.fields).toEqual(["taxCode"]);
     expect(await tenantCount()).toBe(0);
