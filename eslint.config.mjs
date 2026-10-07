@@ -13,12 +13,19 @@ import nextTs from "eslint-config-next/typescript";
  *    trailing slashes, extensions), so a non-canonical specifier cannot bypass it.
  *    Forbidden: the Drizzle client, the whole schema (tables, enums and types: the
  *    types the application needs are re-exported by `@/db/tenant-scope` and
- *    `@/db/platform/*`) and the internals of `@/db/tenant-scope`.
+ *    `@/db/platform/*`), the internals of `@/db/tenant-scope`, the drivers, and
+ *    `tests/` and `scripts/` (which may use the client).
  * 2. `no-restricted-imports` forbids non-canonical specifiers, which the resolver of
  *    (1) may fail to resolve (and then skips), and the database drivers by name.
  * 3. `no-restricted-syntax` forbids what (1) cannot see: `import()` and `require()`
- *    with a computed specifier, and the registered symbol of the connection pool.
+ *    with a computed specifier, indirect `require` (`module.require`, aliases,
+ *    `createRequire`), and the ways to reach the registered symbol of the pool
+ *    (`<anything>.for(...)` with a computed or `vistato.db…` key, `.for` taken as a
+ *    value, `getOwnPropertySymbols`, `Reflect.ownKeys`).
  * 4. `noInlineConfig`: an `eslint-disable` comment cannot switch these rules off.
+ *
+ * Accepted limits (static guardrail, not a sandbox; RLS is out of scope): `eval`,
+ * `new Function`, `globalThis["Sym" + "bol"]` and similar dynamic tricks.
  */
 const ROOT = import.meta.dirname;
 const USE_FOR_TENANT = "Tenant data is reachable only through forTenant from @/db/tenant-scope.";
@@ -38,6 +45,12 @@ const restrictedPaths = {
       target: "./",
       from: ["./node_modules/postgres", "./node_modules/pg"],
       message: "Database connections belong to the data layer (src/db/).",
+    },
+    {
+      // Tests and scripts may use the client freely: a re-export there would open a hole.
+      target: "./",
+      from: ["./tests", "./scripts"],
+      message: "Application code must not import from tests/ or scripts/.",
     },
   ],
 };
@@ -63,30 +76,72 @@ const restrictedSpecifiers = {
   ],
 };
 
+const POOL_IS_PRIVATE = "The database connection pool is private to src/db/. " + USE_FOR_TENANT;
+const LITERAL_ONLY = "(checked by the tenant isolation rules).";
+
+/** A member `.for` / `["for"]` (e.g. `Symbol.for`, `S.for`, `Symbol["for"]`). */
+const FOR_MEMBER = "MemberExpression:matches([property.name='for'][computed=false], [property.value='for'])";
+
 const restrictedSyntax = [
   {
     selector: "ImportExpression[source.type!='Literal']",
-    message: "Dynamic imports must use a plain string literal (checked by the tenant isolation rules).",
+    message: `Dynamic imports must use a plain string literal ${LITERAL_ONLY}`,
   },
   {
     selector: "CallExpression[callee.name='require'][arguments.0.type!='Literal']",
-    message: "require() must use a plain string literal (checked by the tenant isolation rules).",
+    message: `require() must use a plain string literal ${LITERAL_ONLY}`,
+  },
+  {
+    // `const r = require; r(...)`, `require.call(...)`, `fn(require)`: only direct calls.
+    selector: "Identifier[name='require']:not(CallExpression > Identifier.callee)",
+    message: `require may only be called directly, with a string literal ${LITERAL_ONLY}`,
   },
   {
     selector:
-      "CallExpression[callee.object.name='Symbol'][callee.property.name='for']:matches([arguments.0.type!='Literal'], [arguments.0.value=/^vistato[.]db/i])",
-    message: "The database connection pool is private to src/db/. " + USE_FOR_TENANT,
+      "MemberExpression:matches([property.name='require'][computed=false], [property.value='require']), Identifier[name='createRequire']",
+    message: `Use import or a direct require() with a string literal ${LITERAL_ONLY}`,
+  },
+  {
+    // Any `x.for(...)` / `x["for"](...)`, whatever `x` is (covers `const S = Symbol`).
+    selector: `CallExpression:matches([callee.property.name='for'][callee.computed=false], [callee.property.value='for']):matches([arguments.0.type!='Literal'], [arguments.0.value=/^vistato[.]db/i])`,
+    message: POOL_IS_PRIVATE,
+  },
+  {
+    // `const f = Symbol.for; f("vistato.db.pool")`, `Symbol.for.call(...)`.
+    selector: `${FOR_MEMBER}:not(CallExpression > MemberExpression.callee)`,
+    message: POOL_IS_PRIVATE,
+  },
+  {
+    selector:
+      "MemberExpression:matches([property.name='getOwnPropertySymbols'], [property.value='getOwnPropertySymbols'], [object.name='Reflect'][property.name='ownKeys'])",
+    message: POOL_IS_PRIVATE,
   },
 ];
+
+/**
+ * eslint-config-next registers the `import` plugin and its resolver settings only for
+ * `**\/*.{js,jsx,mjs,ts,tsx,mts,cts}`. The isolation block below applies to *every*
+ * file ESLint lints (`.cjs` included), so it registers the same plugin object (a
+ * different object under the same name would be a configuration error) and the same
+ * resolver settings.
+ */
+const nextBase = nextVitals.find((config) => config.plugins?.import);
+if (!nextBase) throw new Error("eslint-config-next no longer registers eslint-plugin-import");
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
     name: "vistato/tenant-isolation",
-    // Same file set as eslint-config-next, which registers the `import` plugin.
-    files: ["**/*.{js,jsx,mjs,ts,tsx,mts,cts}"],
+    // No `files`: every file ESLint lints, whatever its extension, except the data
+    // layer, the scripts and the tests (`tests/unit/tenant-isolation-lint.test.ts`
+    // checks that every linted file of the repository gets these rules).
     ignores: ["src/db/**", "scripts/**", "tests/**"],
+    plugins: { import: nextBase.plugins.import },
+    settings: {
+      "import/parsers": nextBase.settings["import/parsers"],
+      "import/resolver": nextBase.settings["import/resolver"],
+    },
     linterOptions: { noInlineConfig: true },
     rules: {
       "import/no-restricted-paths": ["error", restrictedPaths],

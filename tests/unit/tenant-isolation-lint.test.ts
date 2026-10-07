@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 
 import { getTableColumns, is } from "drizzle-orm";
@@ -24,7 +25,11 @@ beforeAll(() => {
 /** Messages of the isolation rules for `code` linted as if it were the file `filePath`. */
 async function isolationErrors(code: string, filePath: string) {
   const [result] = await eslint.lintText(code, { filePath });
-  return result.messages.filter((m) => m.ruleId && ISOLATION_RULES.has(m.ruleId));
+  // A disable comment for a rule that is not configured yields "Definition for rule
+  // ... was not found" under that rule ID: not a real report, so it does not count.
+  return result.messages.filter(
+    (m) => m.ruleId && ISOLATION_RULES.has(m.ruleId) && !m.message.startsWith("Definition for rule"),
+  );
 }
 
 /** Names of the schema exports that are tables with a `tenant_id` column. */
@@ -83,6 +88,21 @@ const FORBIDDEN: [string, string][] = [
   ["a require with a computed specifier", `export const load = (m: string) => require(m);`],
   ["the symbol of the connection pool", `export const pool = (globalThis as never)[Symbol.for("vistato.db.pool")];`],
   ["a computed registered symbol", `export const key = (name: string) => Symbol.for(name);`],
+  // Other ways to the pool symbol (critic, round 2).
+  ["Symbol['for'] with the pool key", `export const k = Symbol["for"]("vistato.db.pool");`],
+  ["an alias of Symbol", `const S = Symbol;\nexport const k = S.for("vistato.db.pool");`],
+  ["Symbol through globalThis", `export const k = globalThis.Symbol.for("vistato.db.pool");`],
+  ["Symbol.for taken as a value", `const f = Symbol.for;\nexport const k = f("vistato.db.pool");`],
+  ["Symbol.for.call", `export const k = Symbol.for.call(null, "vistato.db.pool");`],
+  ["the symbols of globalThis", `export const s = Object.getOwnPropertySymbols(globalThis);`],
+  ["the keys of globalThis via Reflect", `export const s = Reflect.ownKeys(globalThis);`],
+  // Indirect require (critic, round 2).
+  ["module.require", `export const c = module.require("@/db/client");`],
+  ["module['require']", `export const c = module["require"]("x");`],
+  ["an alias of require", `const r = require;\nexport const c = r("@/db/client");`],
+  ["createRequire", `import { createRequire } from "node:module";\nexport const r = createRequire(import.meta.url);`],
+  // tests/ and scripts/ may use the client: no imports from there.
+  ["a test helper", `import { testDb } from "@/../tests/helpers/db";`],
 ];
 
 /**
@@ -91,6 +111,11 @@ const FORBIDDEN: [string, string][] = [
  */
 const FORBIDDEN_RELATIVE: [string, string][] = [
   ["src/lib/example.ts", `import { getDb } from "../db/client";`],
+  ["src/lib/example.ts", `import { testDb } from "../../tests/helpers/db";`],
+  ["src/lib/example.ts", `export * from "../../tests/helpers/db";`],
+  ["src/lib/example.ts", `import "../../scripts/seed";`],
+  ["src/app/api/example.ts", `import { testDb } from "../../../tests/helpers/db";`],
+  ["e2e/example.spec.ts", `import { testDb } from "../tests/helpers/db";`],
   ["src/lib/example.ts", `import { getDb } from "../lib/../db/client";`],
   ["src/lib/example.ts", `import { getDb } from "./missing/../../db/client";`],
   ["src/lib/example.ts", `import { getDb } from "../db/./client";`],
@@ -118,6 +143,32 @@ const ALLOWED: [string, string][] = [
   ["a module in a parent folder", `import { x } from "../../parent/module";`],
   ["a dynamic import with a string literal", `export const load = () => import("@/lib/hateoas");`],
   ["another registered symbol", `export const key = Symbol.for("react.element");`],
+  ["a well-known symbol", `export const iterator = [][Symbol.iterator];`],
+];
+
+/** JavaScript and TypeScript extensions: every one ESLint lints must get the rules. */
+const SOURCE_EXTENSIONS = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "d.ts", "d.mts", "d.cts"];
+const RULE_NAMES = ["import/no-restricted-paths", "no-restricted-imports", "no-restricted-syntax"];
+
+/** CommonJS files (critic, round 2: `.cjs` used to escape every isolation rule). */
+const FORBIDDEN_CJS: [string, string, string][] = [
+  ["the pool symbol", "src/lib/pool.cjs", `module.exports = () => globalThis[Symbol.for("vistato.db.pool")].db;`],
+  ["a require of the client", "src/lib/leak.cjs", `module.exports = require("../db/client");`],
+  ["a require of the schema", "src/app/leak.cjs", `const { users } = require("@/db/schema");\nmodule.exports = users;`],
+  ["an import of the client", "src/lib/leak.cjs", `import("../db/client").then(console.log);`],
+  [
+    "a disabled require of the client",
+    "src/lib/leak.cjs",
+    `// eslint-disable-next-line import/no-restricted-paths\nmodule.exports = require("../db/client");`,
+  ],
+  [
+    "a file-wide disable",
+    "src/lib/leak.cjs",
+    `/* eslint-disable */\nmodule.exports = () => globalThis[Symbol.for("vistato.db.pool")].db;`,
+  ],
+  ["module.require", "src/lib/leak.cjs", `module.exports = module.require("../db/client");`],
+  ["an alias of require", "src/lib/leak.cjs", `const r = require;\nmodule.exports = r("../db/client");`],
+  ["a require of the driver", "e2e/leak.cjs", `module.exports = require("postgres");`],
 ];
 
 describe("tenant isolation lint rules", () => {
@@ -139,6 +190,61 @@ describe("tenant isolation lint rules", () => {
 
   it.each(FORBIDDEN_RELATIVE)("report, in %s, the relative import %s", async (filePath, code) => {
     expect(await isolationErrors(code, filePath)).not.toEqual([]);
+  });
+
+  it.each(FORBIDDEN_CJS)("report, in a CommonJS file, %s", async (_label, filePath, code) => {
+    const errors = await isolationErrors(code, filePath);
+    expect(errors).not.toEqual([]);
+    expect(errors.every((e) => e.severity === 2)).toBe(true);
+  });
+
+  it("allow a CommonJS file that requires an ordinary package", async () => {
+    expect(await isolationErrors(`module.exports = require("zod");`, "src/lib/ok.cjs")).toEqual([]);
+  });
+
+  /** True when `filePath` gets every isolation rule as an error, with inline config off. */
+  async function isCovered(filePath: string): Promise<boolean> {
+    const config = await eslint.calculateConfigForFile(filePath);
+    if (!config) return false;
+    const severityOf = (rule: string) => {
+      const entry = config.rules?.[rule];
+      return Array.isArray(entry) ? entry[0] : entry;
+    };
+    return (
+      RULE_NAMES.every((rule) => [2, "error"].includes(severityOf(rule))) && config.linterOptions?.noInlineConfig === true
+    );
+  }
+
+  it.each(SOURCE_EXTENSIONS.flatMap((ext) => ["src/lib", "src/app/api", "e2e", "."].map((dir) => `${dir}/x.${ext}`)))(
+    "cover %s",
+    async (filePath) => {
+      expect(await isCovered(filePath)).toBe(true);
+    },
+  );
+
+  it("cover every file of the repository that ESLint lints, outside src/db, scripts and tests", async () => {
+    const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: ROOT })
+      .toString()
+      .split("\n")
+      .filter(Boolean);
+    const exempt = /^(src\/db|scripts|tests)\//;
+    const uncovered: string[] = [];
+    let linted = 0;
+    for (const file of files) {
+      if (exempt.test(file) || (await eslint.isPathIgnored(file))) continue;
+      if (!(await eslint.calculateConfigForFile(file))) continue; // not linted at all (CSS, images, ...)
+      linted++;
+      if (!(await isCovered(file))) uncovered.push(file);
+    }
+    expect(linted).toBeGreaterThan(5);
+    expect(uncovered).toEqual([]);
+  });
+
+  it("do not apply to the data layer, the scripts and the tests", async () => {
+    for (const filePath of ["src/db/x.cjs", "src/db/x.ts", "scripts/x.ts", "tests/x.cjs"]) {
+      const config = await eslint.calculateConfigForFile(filePath);
+      expect(config?.rules?.["import/no-restricted-paths"], filePath).toBeUndefined();
+    }
   });
 
   it("report every tenant-owned table of the schema", async () => {
