@@ -290,6 +290,15 @@ describe("modules", () => {
 });
 
 describe("tenant_modules", () => {
+  it("have an index on module_id", async () => {
+    const rows = await testSql()`
+      select indexdef from pg_indexes
+      where schemaname = 'public' and tablename = 'tenant_modules'
+        and indexname = 'tenant_modules_module_id_idx'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].indexdef).toMatch(/USING btree \(module_id\)$/);
+  });
+
   it("reject a second row for the same tenant and module", async () => {
     const tenant = await insertTenant();
     await insertTenantModule(tenant.id);

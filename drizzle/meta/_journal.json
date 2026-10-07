@@ -8,6 +8,13 @@
       "when": 1791360189459,
       "tag": "0000_multi_tenant_core",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791361193445,
+      "tag": "0001_tenant_modules_module_id_index",
+      "breakpoints": true
     }
   ]
 }
