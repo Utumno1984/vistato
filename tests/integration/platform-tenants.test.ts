@@ -79,7 +79,7 @@ describe("createTenant", () => {
 
   it("trims every field and upper-cases the tax code", async () => {
     const tenant = await create({
-      businessName: `\t Acme S.r.l.${NBSP}\n`,
+      businessName: `\t Acme S.r.l.${NBSP}${cp(0x200b)}\n`,
       vatNumber: " 12345678903 ",
       taxCode: "  rssmra80a01h501u ",
     });
@@ -90,13 +90,19 @@ describe("createTenant", () => {
     });
   });
 
+  it("keeps accented letters and punctuation in the business name", async () => {
+    const businessName = "Caffè & Più d'Italia S.r.l. - Società Benefit";
+    const tenant = await create({ businessName, vatNumber: "12345678903" });
+    expect(tenant.businessName).toBe(businessName);
+  });
+
   it("rejects a VAT number with a wrong check digit, pointing at vatNumber, and inserts nothing", async () => {
     const error = await expectError(create({ businessName: "Acme S.r.l.", vatNumber: "12345678901" }), ValidationError);
     expect(error.fields).toEqual(["vatNumber"]);
     expect(await tenantCount()).toBe(0);
   });
 
-  it.each(["IT12345678903", "12345 678903", "1234567890", "123456789031", ""])(
+  it.each(["IT12345678903", "12345 678903", "1234567890", "123456789031", "", `123456${cp(0)}78903`])(
     "rejects the VAT number %j",
     async (vatNumber) => {
       const error = await expectError(create({ businessName: "Acme S.r.l.", vatNumber }), ValidationError);
@@ -110,6 +116,7 @@ describe("createTenant", () => {
     "RSSMRA80A01H501UX",
     "RSSMRA80A01H50-U",
     "",
+    `RSSMRA80${cp(0)}A01H501U`,
     // Non-ASCII characters that toUpperCase() turns into ASCII letters
     `rssmra80a01h50${cp(0xdf)}`, // sharp s, becomes SS
     `RSSMRA80A01H${cp(0xfb01)}01`, // fi ligature, becomes FI
@@ -136,11 +143,32 @@ describe("createTenant", () => {
     ["tab", "\t"],
     ["line breaks", "\r\n\n"],
     ["NBSP", NBSP],
-    ["mixed blanks", ` \t\n${NBSP} 　`],
-    ["zero-width characters", "​﻿⁠"],
+    ["mixed blanks", ` \t\n${NBSP}${cp(0x2003, 0x3000)}`],
+    ["zero-width characters", cp(0x200b, 0xfeff, 0x2060)],
+    ["soft hyphens", cp(0xad, 0xad)],
+    ["Hangul fillers", cp(0x3164, 0x115f, 0x1160, 0xffa0)],
+    ["invisible math operators", cp(0x2061, 0x2062, 0x2063, 0x2064)],
   ])("rejects a business name made of %s and inserts nothing", async (_label, businessName) => {
     const error = await expectError(create({ businessName, vatNumber: "12345678903" }), ValidationError);
     expect(error.fields).toEqual(["businessName"]);
+    expect(await tenantCount()).toBe(0);
+  });
+
+  it.each([
+    ["NUL", cp(0)],
+    ["NUL only", cp(0, 0)],
+    ["escape", cp(0x1b)],
+    ["DEL", cp(0x7f)],
+    ["C1 control", cp(0x9b)],
+    ["inner tab", "\t"],
+    ["inner line break", "\n"],
+  ])("rejects a business name containing a control character (%s) with a ValidationError", async (label, chars) => {
+    const businessName = label === "NUL only" ? chars : `Acme${chars}S.r.l.`;
+    const error = await expectError(create({ businessName, vatNumber: "12345678903" }), ValidationError);
+    expect(error.fields).toEqual(["businessName"]);
+    // The error never echoes the input or the query parameters.
+    expect(error.message).not.toContain("Acme");
+    expect(error.message).not.toContain("12345678903");
     expect(await tenantCount()).toBe(0);
   });
 
@@ -300,7 +328,7 @@ describe("setTenantStatus", () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  it.each(["not-a-uuid", "", "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5", "' or 1=1 --"])(
+  it.each(["not-a-uuid", "", "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5", "' or 1=1 --", `6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b${cp(0)}`])(
     "throws ValidationError for the non-UUID id %j and changes nothing",
     async (tenantId) => {
       await create({ businessName: "Acme S.r.l.", vatNumber: "12345678903" });

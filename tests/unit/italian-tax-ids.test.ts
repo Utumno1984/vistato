@@ -4,7 +4,6 @@ import {
   isValidTaxCode,
   isValidVatNumber,
   taxCodeSchema,
-  unicodeTrim,
   vatNumberSchema,
 } from "@/lib/validation/italian-tax-ids";
 
@@ -123,16 +122,18 @@ describe("taxCodeSchema", () => {
   });
 });
 
-describe("unicodeTrim", () => {
-  it("removes spaces, tabs, line breaks, NBSP and zero-width characters at the edges", () => {
-    expect(unicodeTrim(` \t\r\n${NBSP} 　​﻿Acme S.r.l.‍⁠ \n`)).toBe("Acme S.r.l.");
+describe("tax identifiers and invisible or control characters", () => {
+  it("removes invisible characters at the edges but rejects them inside", () => {
+    const zwsp = cp(0x200b);
+    const softHyphen = cp(0xad);
+    expect(taxCodeSchema.parse(`${zwsp}rssmra80a01h501u${softHyphen}`)).toBe("RSSMRA80A01H501U");
+    expect(taxCodeSchema.safeParse(`RSSMRA80${zwsp}A01H501U`).success).toBe(false);
+    expect(vatNumberSchema.parse(`${softHyphen}12345678903${zwsp}`)).toBe("12345678903");
+    expect(vatNumberSchema.safeParse(`123456${zwsp}78903`).success).toBe(false);
   });
 
-  it("keeps inner characters", () => {
-    expect(unicodeTrim(`Acme${NBSP}\tS.r.l.`)).toBe(`Acme${NBSP}\tS.r.l.`);
-  });
-
-  it("reduces a blank-only string to empty", () => {
-    expect(unicodeTrim(`\t\n${NBSP}​`)).toBe("");
+  it.each([0x00, 0x09, 0x1f, 0x7f])("rejects a control character (code point %d) inside the value", (code) => {
+    expect(taxCodeSchema.safeParse(`RSSMRA80${cp(code)}A01H501U`).success).toBe(false);
+    expect(vatNumberSchema.safeParse(`123456${cp(code)}78903`).success).toBe(false);
   });
 });

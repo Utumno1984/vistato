@@ -13,7 +13,8 @@ import { z } from "zod";
 import { getDb, type Database } from "@/db/client";
 import { DuplicateVatNumberError, isUniqueViolation, TenantNotFoundError, ValidationError } from "@/db/errors";
 import { tenants, tenantStatus, type Tenant } from "@/db/schema";
-import { taxCodeSchema, unicodeTrim, vatNumberSchema } from "@/lib/validation/italian-tax-ids";
+import { taxCodeSchema, vatNumberSchema } from "@/lib/validation/italian-tax-ids";
+import { requiredTextSchema } from "@/lib/validation/text";
 
 const VAT_NUMBER_UNIQUE_CONSTRAINT = "tenants_vat_number_unique";
 
@@ -25,7 +26,7 @@ const VAT_NUMBER_UNIQUE_CONSTRAINT = "tenants_vat_number_unique";
  */
 export const createTenantInputSchema = z
   .object({
-    businessName: z.string().overwrite(unicodeTrim).min(1, "La ragione sociale è obbligatoria"),
+    businessName: requiredTextSchema("La ragione sociale è obbligatoria"),
     vatNumber: vatNumberSchema.nullish(),
     taxCode: taxCodeSchema.nullish(),
   })

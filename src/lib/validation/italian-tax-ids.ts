@@ -1,21 +1,8 @@
 import { z } from "zod";
 
-/**
- * Characters stripped from the edges of every input string: Unicode white space
- * (spaces, tabs, line breaks, NBSP, ...) plus the invisible zero-width characters
- * (ZWSP, ZWNJ, ZWJ, word joiner, BOM) that `String.prototype.trim` keeps.
- *
- * The database CHECK on the business name uses `btrim`, which removes only ASCII
- * spaces: a value made of tabs or NBSPs would pass it, so blank detection must
- * happen here.
- */
-const EDGE_BLANKS = /^[\p{White_Space}​-‍⁠﻿]+|[\p{White_Space}​-‍⁠﻿]+$/gu;
+import { unicodeTrim } from "./text";
 
-/** Removes Unicode white space and zero-width characters from both ends. */
-export function unicodeTrim(value: string): string {
-  return value.replace(EDGE_BLANKS, "");
-}
-
+// ASCII only: `[0-9]` and `[A-Z]` never match other Unicode digits or letters.
 const VAT_NUMBER_FORMAT = /^[0-9]{11}$/;
 const TAX_CODE_FORMAT = /^(?:[0-9]{11}|[A-Z0-9]{16})$/;
 
