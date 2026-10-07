@@ -40,6 +40,8 @@ Requirements: Node.js 24, Docker.
 cp .env.example .env
 npm install
 npm run db:up      # Postgres on port 5433, with a separate test database
+npm run db:migrate # apply the migrations to the development database
+npm run db:seed    # write the module catalogue (idempotent)
 npm run dev        # http://localhost:3000 — API entry point at /api
 ```
 
@@ -47,7 +49,9 @@ npm run dev        # http://localhost:3000 — API entry point at /api
 | --- | --- |
 | `npm run check` | Lint, type check, unit and integration tests |
 | `npm run test:e2e` | Production build + Playwright end-to-end tests |
-| `npm run db:generate` / `db:migrate` | Create / apply Drizzle migrations |
+| `npm run db:generate` / `db:migrate` | Create / apply Drizzle migrations (schema in `src/db/schema/`) |
+| `npm run db:migrate:test` | Apply the migrations to the test database (`TEST_DATABASE_URL`) |
+| `npm run db:seed` | Upsert the module catalogue (`src/db/catalog/modules.ts`) |
 
 ## AI-assisted workflow
 
