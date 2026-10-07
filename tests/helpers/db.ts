@@ -1,7 +1,11 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import { requireTestDatabaseUrl } from "@/db/migrate";
+import {
+  assertConnectedToTestDatabase,
+  assertTestDatabase,
+  requireTestDatabaseUrl,
+} from "@/db/migrate";
 import * as schema from "@/db/schema";
 
 /**
@@ -32,9 +36,15 @@ export function testDb(): PostgresJsDatabase<typeof schema> {
   return database;
 }
 
-/** Empties every tenant-owned table. The global `modules` catalogue is kept. */
+/**
+ * Empties every tenant-owned table. The global `modules` catalogue is kept.
+ * Refuses unless both the URL and the connected database are a `*_test` database.
+ */
 export async function resetDb(): Promise<void> {
-  await testSql()`TRUNCATE tenant_modules, users, tenants CASCADE`;
+  assertTestDatabase(requireTestDatabaseUrl());
+  const sql = testSql();
+  await assertConnectedToTestDatabase(sql);
+  await sql`TRUNCATE tenant_modules, users, tenants CASCADE`;
 }
 
 export async function closeTestDb(): Promise<void> {

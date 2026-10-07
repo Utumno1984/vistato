@@ -22,16 +22,20 @@ async function publicTables(db: TempDatabase): Promise<string[]> {
 }
 
 describe("npm run db:migrate:test", () => {
-  // Stands in for the development database: it must never be touched.
+  // Stands in for the development database (name without `_test`): it must never be touched.
   let devDb: TempDatabase;
+  // A legitimate test database.
+  let testDb: TempDatabase;
   let emptyDir: string;
 
   beforeEach(async () => {
-    devDb = await createTempDatabase();
+    devDb = await createTempDatabase({ testSuffix: false });
+    testDb = await createTempDatabase();
     emptyDir = mkdtempSync(path.join(tmpdir(), "vistato-no-env-"));
   });
   afterEach(async () => {
     await devDb.drop();
+    await testDb.drop();
     rmSync(emptyDir, { recursive: true, force: true });
   });
 
@@ -58,12 +62,32 @@ describe("npm run db:migrate:test", () => {
     expect(await publicTables(devDb)).toEqual([]);
   });
 
-  it("migrates the database at TEST_DATABASE_URL", async () => {
+  it("refuses a TEST_DATABASE_URL whose database name does not end with _test", async () => {
     const result = runScript({ ...baseEnv(), TEST_DATABASE_URL: devDb.url }, ROOT);
 
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Refusing to use database "${devDb.name}"`);
+    expect(await publicTables(devDb)).toEqual([]);
+  });
+
+  it("refuses a `database` query parameter that redirects to a non-test database", async () => {
+    const url = new URL(testDb.url);
+    url.searchParams.set("database", devDb.name);
+    const result = runScript({ ...baseEnv(), TEST_DATABASE_URL: url.toString() }, ROOT);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Refusing to use database "${devDb.name}"`);
+    expect(await publicTables(devDb)).toEqual([]);
+    expect(await publicTables(testDb)).toEqual([]);
+  });
+
+  it("migrates the database at TEST_DATABASE_URL", async () => {
+    const result = runScript({ ...baseEnv(), TEST_DATABASE_URL: testDb.url }, ROOT);
+
     expect(result.status, result.stderr).toBe(0);
-    expect(await publicTables(devDb)).toEqual(
+    expect(await publicTables(testDb)).toEqual(
       expect.arrayContaining(["tenants", "users", "modules", "tenant_modules"]),
     );
+    expect(await publicTables(devDb)).toEqual([]);
   });
 });
