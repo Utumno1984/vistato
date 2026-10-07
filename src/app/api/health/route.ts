@@ -1,15 +1,10 @@
-import { getSql } from "@/db/client";
+import { pingDatabase } from "@/db/health";
 import { buildLinks, resource } from "@/lib/hateoas";
 
 type CheckStatus = "up" | "down";
 
 async function checkDatabase(): Promise<CheckStatus> {
-  try {
-    await getSql()`select 1`;
-    return "up";
-  } catch {
-    return "down";
-  }
+  return (await pingDatabase()) ? "up" : "down";
 }
 
 /** Liveness and readiness: 200 when every dependency is reachable, 503 otherwise. */
