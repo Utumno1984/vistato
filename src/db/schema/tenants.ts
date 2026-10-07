@@ -8,8 +8,9 @@ import { tenantStatus } from "./enums";
  * Azienda cliente (tenant). Every customer-owned row references a tenant.
  *
  * The database checks only the *format* of the tax identifiers; normalisation
- * (removing "IT", spaces, upper-casing) and the VAT check digit are handled by the
- * application layer.
+ * (trimming, upper-casing the codice fiscale) and the VAT check digit are handled by
+ * the application layer (`src/lib/validation/italian-tax-ids.ts`). An "IT" prefix
+ * is rejected, not removed.
  */
 export const tenants = pgTable(
   "tenants",
