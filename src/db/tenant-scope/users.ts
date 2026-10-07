@@ -60,6 +60,9 @@ export const updateUserInputSchema = createUserInputSchema
     message: "Nessun campo da modificare",
   });
 
+export type { User };
+export type UserRole = z.infer<typeof userFields.role>;
+export type UserStatus = z.infer<typeof userFields.status>;
 export type CreateUserInput = z.input<typeof createUserInputSchema>;
 export type UpdateUserInput = z.input<typeof updateUserInputSchema>;
 

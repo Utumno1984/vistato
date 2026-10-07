@@ -22,6 +22,8 @@ import { ValidationError } from "@/db/errors";
 import type { TenantId } from "./tenant-id";
 import { tenantUsers, type TenantUsers } from "./users";
 
+// Application code cannot import `@/db/schema` (ESLint): the types it needs come from here.
+export type { User, UserRole, UserStatus } from "./users";
 export {
   createUserInputSchema,
   PERSON_NAME_MAX_RAW_LENGTH,
