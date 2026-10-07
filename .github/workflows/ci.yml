@@ -12,6 +12,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A hung step (e.g. an interactive `drizzle-kit generate` prompt) must not block CI.
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17-alpine
