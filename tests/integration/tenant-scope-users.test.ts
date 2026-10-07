@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { Database } from "@/db/client";
+import { closeDb, type Database } from "@/db/client";
 import { DuplicateEmailError, TenantNotFoundError, ValidationError } from "@/db/errors";
 import { requireTestDatabaseUrl } from "@/db/migrate";
 import { createTenant, setTenantStatus } from "@/db/platform/tenants";
@@ -464,10 +464,5 @@ describe("users.list", () => {
   });
 });
 
-afterAll(async () => {
-  // The "default database" test opens the application pool: close it.
-  const globalForDb = globalThis as unknown as { sql?: { end: () => Promise<void> }; db?: unknown };
-  await globalForDb.sql?.end();
-  delete globalForDb.sql;
-  delete globalForDb.db;
-});
+// The "default database" test opens the application pool: close it.
+afterAll(closeDb);

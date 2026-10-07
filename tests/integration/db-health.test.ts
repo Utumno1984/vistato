@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const globalForDb = globalThis as unknown as { sql?: { end: () => Promise<void> }; db?: unknown };
-
 async function resetPool() {
-  await globalForDb.sql?.end();
-  delete globalForDb.sql;
-  delete globalForDb.db;
+  const { closeDb } = await import("@/db/client");
+  await closeDb();
   vi.resetModules();
 }
 
