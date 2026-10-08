@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE FatturaElettronica [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<FatturaElettronica versione="FPR12">
+  <FatturaElettronicaHeader>
+    <CedentePrestatore>
+      <DatiAnagrafici>
+        <IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdFiscaleIVA>
+        <Anagrafica><Denominazione>&xxe;</Denominazione></Anagrafica>
+      </DatiAnagrafici>
+    </CedentePrestatore>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody>
+    <DatiGenerali>
+      <DatiGeneraliDocumento>
+        <TipoDocumento>TD01</TipoDocumento><Divisa>EUR</Divisa><Data>2024-02-29</Data>
+        <Numero>1</Numero><ImportoTotaleDocumento>1.00</ImportoTotaleDocumento>
+      </DatiGeneraliDocumento>
+    </DatiGenerali>
+  </FatturaElettronicaBody>
+</FatturaElettronica>

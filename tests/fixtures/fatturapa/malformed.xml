@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FatturaElettronica versione="FPR12">
+  <FatturaElettronicaHeader>
+    <CedentePrestatore>
+  </FatturaElettronicaHeader>
+  <FatturaElettronicaBody><DatiGenerali>
+</FatturaElettronica>
