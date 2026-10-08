@@ -1,0 +1,84 @@
+import { z } from "zod";
+
+import { tooLongMessage, unicodeTrim } from "./text";
+
+// ASCII only: `[0-9]` and `[A-Z]` never match other Unicode digits or letters.
+const VAT_NUMBER_FORMAT = /^[0-9]{11}$/;
+const TAX_CODE_FORMAT = /^(?:[0-9]{11}|[A-Z0-9]{16})$/;
+
+/** Anti-abuse cap on the raw input (before trimming): generous for 11 or 16 characters. */
+export const TAX_ID_MAX_RAW_LENGTH = 64;
+
+/** Partita IVA normalisation: trim only (no "IT" prefix removal, no inner spaces removal). */
+export function normalizeVatNumber(value: string): string {
+  return unicodeTrim(value);
+}
+
+/**
+ * Codice fiscale normalisation: trim and upper-case the ASCII letters only.
+ * `toUpperCase()` would map some non-ASCII characters to ASCII letters (sharp s to
+ * "SS", the "fi" ligature to "FI", dotless i to "I", long s to "S"), turning an
+ * invalid code into a valid-looking one; leaving them untouched makes the format
+ * check reject them.
+ */
+export function normalizeTaxCode(value: string): string {
+  return unicodeTrim(value).replace(/[a-z]+/g, (letters) => letters.toUpperCase());
+}
+
+/**
+ * Check digit of an Italian VAT number: digits in odd positions (1st, 3rd, ..., 9th)
+ * are summed as they are; digits in even positions are doubled, minus 9 if > 9.
+ * The 11th digit must equal (10 - sum mod 10) mod 10.
+ * Expects a string of exactly 11 ASCII digits.
+ */
+function hasValidVatCheckDigit(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < 10; i++) {
+    const digit = digits.charCodeAt(i) - 48;
+    if (i % 2 === 0) {
+      sum += digit;
+    } else {
+      const doubled = digit * 2;
+      sum += doubled > 9 ? doubled - 9 : doubled;
+    }
+  }
+  return (10 - (sum % 10)) % 10 === digits.charCodeAt(10) - 48;
+}
+
+/** True for exactly 11 digits (after trim) with a correct check digit. */
+export function isValidVatNumber(value: string): boolean {
+  if (value.length > TAX_ID_MAX_RAW_LENGTH) return false;
+  const normalized = normalizeVatNumber(value);
+  return VAT_NUMBER_FORMAT.test(normalized) && hasValidVatCheckDigit(normalized);
+}
+
+/**
+ * True for 11 digits (companies) or 16 alphanumerics (people, including omocodia),
+ * after trim and upper-casing. The CF check character is not verified, and an
+ * 11-digit CF is not subject to the VAT algorithm.
+ */
+export function isValidTaxCode(value: string): boolean {
+  return value.length <= TAX_ID_MAX_RAW_LENGTH && TAX_CODE_FORMAT.test(normalizeTaxCode(value));
+}
+
+const maxRawLength = {
+  message: tooLongMessage(TAX_ID_MAX_RAW_LENGTH),
+  abort: true,
+} as const;
+
+/** Partita IVA: trimmed, 11 digits, valid check digit. Outputs the normalised value. */
+export const vatNumberSchema = z
+  .string()
+  .max(TAX_ID_MAX_RAW_LENGTH, maxRawLength)
+  .overwrite(normalizeVatNumber)
+  .regex(VAT_NUMBER_FORMAT, "La partita IVA deve essere composta da 11 cifre")
+  .refine((value) => !VAT_NUMBER_FORMAT.test(value) || hasValidVatCheckDigit(value), {
+    message: "La cifra di controllo della partita IVA non è corretta",
+  });
+
+/** Codice fiscale: trimmed, upper-cased, 11 digits or 16 alphanumerics. Outputs the normalised value. */
+export const taxCodeSchema = z
+  .string()
+  .max(TAX_ID_MAX_RAW_LENGTH, maxRawLength)
+  .overwrite(normalizeTaxCode)
+  .regex(TAX_CODE_FORMAT, "Il codice fiscale deve essere di 11 cifre o di 16 caratteri alfanumerici");
