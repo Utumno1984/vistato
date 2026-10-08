@@ -15,15 +15,28 @@ pipeline, senza saltare passaggi:
 
 1. **pianificatore** → crea i ticket GitHub (o restituisce domande: girale a Daniele e aspetta).
 2. Per ogni ticket, in ordine di dipendenza:
-   1. **sviluppatore** → branch `feat/<N>-<slug>`, codice, test, `npm run check` verde, PR in bozza.
-   2. **tester** → QA: criteri di accettazione, end-to-end, smoke test.
-   3. **critico-avversariale** → red team del diff.
-   4. Se tester o critico segnalano problemi, torna allo **sviluppatore** con l'elenco
-      completo, poi ripeti tester e critico. Dopo 2 giri senza esito positivo fermati e
+   1. **sviluppatore** → branch `feat/<N>-<slug>` e **PR in bozza subito** (`Closes #<N>`), così
+      la CI gira a ogni push. Codice e test insieme: unitari, di integrazione e **e2e per ogni
+      criterio di accettazione visibile dall'esterno** (API o pagine). `npm run check` verde.
+   2. **CI verde** sulla PR (`gh pr checks <N> --watch`): lint, tipi, test unitari e di
+      integrazione, smoke, e2e completi. Se è rossa torna allo sviluppatore: tester e critico
+      non partono su una CI rossa.
+   3. **tester** → QA: criteri di accettazione dal punto di vista dell'utente, smoke test sulla
+      build di produzione, intera suite e2e, casi non coperti dai test.
+   4. **critico-avversariale** → red team del diff, per ultimo, su codice già verde e verificato.
+   5. Se tester o critico segnalano problemi, torna allo **sviluppatore** con l'elenco
+      completo e riparti dal punto 2 (CI). Dopo 2 giri senza esito positivo fermati e
       chiedi a Daniele.
-   5. Quando tester = QA SUPERATO e critico = APPROVATO: `gh pr ready <N>` e avvisa Daniele
-      con un riepilogo (cosa cambia, test aggiunti, note del critico).
-3. **Il merge lo fa solo Daniele.** Nessun agente fa merge, push su `main` o push forzati.
+   6. Quando CI verde, tester = QA SUPERATO e critico = APPROVATO: `gh pr ready <N>` e riepilogo
+      (cosa cambia, test aggiunti, note del critico).
+3. **Merge**: lo fa l'orchestratore di `~/projects` (delega di Daniele), mai le sessioni o gli
+   agenti di questo progetto. Niente push su `main` né push forzati.
+
+### Comandi `gh` nelle sessioni headless
+
+`gh` è nel `PATH` delle sessioni headless: chiamalo come `gh ...`, all'inizio del comando e da
+solo (niente `~/.local/bin/gh`, niente `PATH=... gh`, niente `cd ... && gh`). Altrimenti il
+comando non corrisponde al permesso `Bash(gh *)` e resta bloccato in attesa di un'approvazione.
 
 ### Budget dei token (piano Pro)
 

@@ -22,11 +22,14 @@ consegni una pull request in bozza.
 4. Implementa il minimo necessario per soddisfare i criteri di accettazione, seguendo le
    convenzioni del codice esistente. Se serve una migrazione: modifica `src/db/schema.ts`,
    poi `npm run db:generate`, e rileggi lo SQL generato in `drizzle/`.
-5. Scrivi i test: unitari in `tests/unit/`, di integrazione (con il database di test) in
-   `tests/integration/`. Copri ogni criterio di accettazione e ogni caso limite del ticket.
-6. Esegui `npm run check` (lint + tipi + test). Non andare avanti finché non è tutto verde.
-7. Commit piccoli e descrittivi; apri la PR in bozza:
+5. Al primo commit pusha il branch e apri subito la PR in bozza, così la CI gira a ogni push:
    `gh pr create --draft --title "..." --body "Closes #<N>\n\n<cosa cambia e come è testato>"`.
+6. Scrivi i test: unitari in `tests/unit/`, di integrazione (con il database di test) in
+   `tests/integration/` ed **end-to-end in `e2e/`** (Playwright) per ogni criterio di
+   accettazione visibile dall'esterno (API o pagine). Copri ogni caso limite del ticket.
+7. Esegui `npm run check` (lint + tipi + test). Non andare avanti finché non è tutto verde.
+8. Commit piccoli e descrittivi; aggiorna la descrizione della PR e attendi la CI verde
+   (`gh pr checks <N> --watch`) prima di restituire il lavoro.
 
 ## Quando una PR torna indietro
 
