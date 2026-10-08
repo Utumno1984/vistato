@@ -60,6 +60,22 @@ export class DuplicateLoginEmailError extends Error {
   }
 }
 
+/** The tenant already has an invoice with the same supplier (VAT country + code), number and date. */
+export class DuplicateInvoiceError extends Error {
+  constructor() {
+    super("An invoice with the same supplier, number and date already exists in the tenant");
+    this.name = "DuplicateInvoiceError";
+  }
+}
+
+/** A referenced user (e.g. the uploader of an invoice) does not exist in the tenant. */
+export class UserNotInTenantError extends Error {
+  constructor(readonly userId: string) {
+    super("User not found in the tenant");
+    this.name = "UserNotInTenantError";
+  }
+}
+
 const UNIQUE_VIOLATION = "23505";
 const FOREIGN_KEY_VIOLATION = "23503";
 
