@@ -32,7 +32,7 @@ function amountToCents(raw: string): number | null {
   const negative = raw.startsWith("-");
   const [integer, decimals] = raw.replace("-", "").split(".");
   const cents = Number(integer) * 100 + Number(decimals);
-  return negative ? -cents : cents;
+  return negative && cents !== 0 ? -cents : cents;
 }
 
 const PREDEFINED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
@@ -142,7 +142,7 @@ function parseUnsafe(input: string | Uint8Array): FatturaPaResult {
 
   const xml = decoded.text.replace(/^﻿/, "");
   if (xml.trim() === "") return fail("file", "Il file è vuoto");
-  if (!xml.includes("<") && /^\s*MII[A-Za-z0-9+/=\s]*$/.test(xml.slice(0, 200))) return fail("file", P7M_MESSAGE);
+  if (!xml.includes("<") && /^\s*MI[A-Za-z0-9+/=\s]*$/.test(xml.slice(0, 200))) return fail("file", P7M_MESSAGE);
   if (!xml.trimStart().startsWith("<")) return fail("file", NOT_XML);
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) {
     return fail("file", "Il file contiene una dichiarazione DOCTYPE o entità, non ammesse");
@@ -173,7 +173,8 @@ function parseUnsafe(input: string | Uint8Array): FatturaPaResult {
   const denomination = r.text(root, [...supplier, "Anagrafica", "Denominazione"], "supplierName");
   const firstName = r.text(root, [...supplier, "Anagrafica", "Nome"], "supplierName");
   const lastName = r.text(root, [...supplier, "Anagrafica", "Cognome"], "supplierName");
-  const supplierName = denomination || [firstName, lastName].filter(Boolean).join(" ") || undefined;
+  // Denominazione wins; otherwise both Nome and Cognome are needed.
+  const supplierName = denomination || (firstName && lastName ? `${firstName} ${lastName}` : undefined);
 
   const documentType = r.text(body, [...general, "TipoDocumento"], "documentType");
   const currency = r.text(body, [...general, "Divisa"], "currency");
