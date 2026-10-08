@@ -52,7 +52,9 @@ const tokenOf = (res: Response) => /vistato_session=([^;]*)/.exec(res.headers.ge
 
 describe("POST /api/auth/login", () => {
   it("answers 200 with the user resource and a 7-day httpOnly SameSite=Lax cookie", async () => {
+    vi.stubEnv("SESSION_COOKIE_SECURE", ""); // anything but "false": Secure stays on
     const res = await doLogin();
+    vi.unstubAllEnvs();
     expect(res.status).toBe(200);
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toMatch(/^vistato_session=[A-Za-z0-9_-]{43}; /);
