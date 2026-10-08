@@ -10,6 +10,7 @@ import {
   TenantNotFoundError,
   ValidationError,
 } from "@/db/errors";
+import { deleteUserSessions } from "@/db/auth/sessions";
 import { users, userRole, userStatus, type User as UserRow } from "@/db/schema";
 import { hashPassword, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/lib/auth/password";
 import { emailSchema } from "@/lib/validation/email";
@@ -70,6 +71,7 @@ export const updateUserInputSchema = createUserInputSchema
 
 /** A user as exposed by the data layer: the password hash never leaves the database layer. */
 export type User = Omit<UserRow, "passwordHash">;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- omitted on purpose
 const { passwordHash: _passwordHash, ...userColumns } = getTableColumns(users);
 export type UserRole = z.infer<typeof userFields.role>;
 export type UserStatus = z.infer<typeof userFields.status>;
@@ -166,20 +168,24 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
       const { email, firstName, lastName, role, status } = parse(updateUserInputSchema, patch);
       if (!userIdSchema.safeParse(id).success) return null;
       try {
-        const [user] = await db
-          .update(users)
-          // Only the known fields, listed one by one: `tenant_id` and `id` are never written.
-          .set({
-            email,
-            firstName,
-            lastName,
-            role,
-            status,
-            updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
-          })
-          .where(inTenant(id))
-          .returning(userColumns);
-        return user ?? null;
+        return await db.transaction(async (tx) => {
+          const [user] = await tx
+            .update(users)
+            // Only the known fields, listed one by one: `tenant_id` and `id` are never written.
+            .set({
+              email,
+              firstName,
+              lastName,
+              role,
+              status,
+              updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
+            })
+            .where(inTenant(id))
+            .returning(userColumns);
+          // A user leaving ACTIVE loses its sessions for good: reactivating must not revive them.
+          if (user && status !== undefined && status !== "ACTIVE") await deleteUserSessions(id, tenantId, tx);
+          return user ?? null;
+        });
       } catch (error) {
         rethrowAsDomainError(error, email, tenantId);
       }
@@ -195,21 +201,26 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
       const valid = parse(passwordSchema, password);
       if (!userIdSchema.safeParse(id).success) return false;
       const passwordHash = await hashPassword(valid);
+      // Read before the UPDATE: after a failed statement a transaction cannot run queries.
+      const [current] = await db.select({ email: users.email }).from(users).where(inTenant(id)).limit(1);
+      if (!current) return false;
       try {
-        const updated = await db
-          .update(users)
-          .set({
-            passwordHash,
-            updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
-          })
-          .where(inTenant(id))
-          .returning({ id: users.id });
-        return updated.length > 0;
+        return await db.transaction(async (tx) => {
+          const updated = await tx
+            .update(users)
+            .set({
+              passwordHash,
+              updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
+            })
+            .where(inTenant(id))
+            .returning({ id: users.id });
+          if (updated.length === 0) return false;
+          // A new password invalidates every session opened with the old one.
+          await deleteUserSessions(id, tenantId, tx);
+          return true;
+        });
       } catch (error) {
-        if (isUniqueViolation(error, LOGIN_EMAIL_UNIQUE_INDEX)) {
-          const user = await db.select({ email: users.email }).from(users).where(inTenant(id)).limit(1);
-          throw new DuplicateLoginEmailError(user[0]?.email ?? "");
-        }
+        if (isUniqueViolation(error, LOGIN_EMAIL_UNIQUE_INDEX)) throw new DuplicateLoginEmailError(current.email);
         throw error;
       }
     },

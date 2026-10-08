@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { createSession, deleteSession, resolveSession, SESSION_DURATION_MS } from "@/db/auth";
+import { createSession, deleteSession, deleteUserSessions, resolveSession, SESSION_DURATION_MS } from "@/db/auth";
 import { createTenant, setTenantStatus } from "@/db/platform/tenants";
 import { forTenant } from "@/db/tenant-scope";
 
@@ -128,6 +128,49 @@ describe("deleteSession", () => {
     for (const token of ["", "nope!", "A".repeat(43), "A".repeat(100_000)]) {
       await expect(deleteSession(token, testDb())).resolves.toBeUndefined();
     }
+  });
+});
+
+describe("session invalidation", () => {
+  it("setPassword deletes the user's sessions, not those of other users", async () => {
+    const old = await create();
+    const other = await create(userB, tenantB);
+    expect(await forTenant(tenantA, testDb()).users.setPassword(userA, "nuova-password-123")).toBe(true);
+    expect(await resolve(old)).toBeNull();
+    expect(await resolve(other)).not.toBeNull();
+  });
+
+  it("setPassword on a user of another tenant keeps the sessions", async () => {
+    const token = await create(userB, tenantB);
+    expect(await forTenant(tenantA, testDb()).users.setPassword(userB, "nuova-password-123")).toBe(false);
+    expect(await resolve(token)).not.toBeNull();
+  });
+
+  it("a user disabled and then reactivated does not get the old token back", async () => {
+    const scope = forTenant(tenantA, testDb());
+    const token = await create();
+    await scope.users.update(userA, { status: "DISABLED" });
+    expect(await resolve(token)).toBeNull();
+    await scope.users.update(userA, { status: "ACTIVE" });
+    expect(await resolve(token)).toBeNull();
+  });
+
+  it("updates that keep the user ACTIVE keep the sessions", async () => {
+    const scope = forTenant(tenantA, testDb());
+    const token = await create();
+    await scope.users.update(userA, { firstName: "Marco" });
+    await scope.users.update(userA, { status: "ACTIVE" });
+    expect(await resolve(token)).not.toBeNull();
+  });
+
+  it("deleteUserSessions removes the sessions of that user and tenant only", async () => {
+    const mine = await create();
+    const theirs = await create(userB, tenantB);
+    await deleteUserSessions(userA, tenantB, testDb());
+    expect(await resolve(mine)).not.toBeNull();
+    await deleteUserSessions(userA, tenantA, testDb());
+    expect(await resolve(mine)).toBeNull();
+    expect(await resolve(theirs)).not.toBeNull();
   });
 });
 

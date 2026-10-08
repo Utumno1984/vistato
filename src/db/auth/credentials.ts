@@ -21,6 +21,16 @@ export interface AuthenticatedUser {
 /** Hash verified when the email is unknown, so response times do not reveal which emails exist. */
 let dummyHash: Promise<string> | undefined;
 
+/** Computed at module load; a failure is not remembered, the next login retries. */
+function getDummyHash(): Promise<string> {
+  dummyHash ??= hashPassword("dummy-password-for-constant-time").catch((error: unknown) => {
+    dummyHash = undefined;
+    throw error;
+  });
+  return dummyHash;
+}
+void getDummyHash().catch(() => undefined);
+
 /**
  * Checks an email and a password. The email is compared trimmed and case-insensitively.
  * @returns the user and tenant when the credentials are right, the user is ACTIVE and the
@@ -52,8 +62,7 @@ export async function verifyCredentials(
     .limit(1);
 
   if (!row?.passwordHash) {
-    dummyHash ??= hashPassword("dummy-password-for-constant-time");
-    await verifyPassword(await dummyHash, password);
+    await verifyPassword(await getDummyHash(), password);
     return null;
   }
 

@@ -98,6 +98,18 @@ export async function resolveSession(
   };
 }
 
+/**
+ * Deletes every session of a user (matching both user and tenant). Used when the password
+ * changes or the user stops being ACTIVE. Accepts a transaction as `db`.
+ */
+export async function deleteUserSessions(
+  userId: string,
+  tenantId: string,
+  db: Pick<Database, "delete"> = getDb(),
+): Promise<void> {
+  await db.delete(sessions).where(and(eq(sessions.userId, userId), eq(sessions.tenantId, tenantId)));
+}
+
 /** Deletes the session of this token. Idempotent: an unknown or malformed token is fine. */
 export async function deleteSession(token: string, db: Database = getDb()): Promise<void> {
   if (typeof token !== "string" || !TOKEN_PATTERN.test(token)) return;

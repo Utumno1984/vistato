@@ -60,7 +60,7 @@ export class DuplicateLoginEmailError extends Error {
   }
 }
 
-const UNIQUE_VIOLATION ="23505";
+const UNIQUE_VIOLATION = "23505";
 const FOREIGN_KEY_VIOLATION = "23503";
 
 /**
