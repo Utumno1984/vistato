@@ -11,6 +11,8 @@ labels: ticket
 ## Criteri di accettazione
 - [ ] Dato ..., quando ..., allora ...
 
+## Test e2e
+
 ## Note tecniche
 
 ## Casi limite da coprire

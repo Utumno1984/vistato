@@ -51,6 +51,20 @@ Le quote di utilizzo (5 ore e settimanale) sono il vincolo: usa il modello più 
 Lavori piccoli e mirati (una correzione di testo, una domanda sul codice) non richiedono la
 pipeline completa: chiedi a Daniele se in dubbio.
 
+## Regressione e test
+
+- I test esistenti non si cancellano, non si rinominano e non si indeboliscono (niente `.skip`,
+  `.only`, `.fixme`, asserzioni rimosse, soglie o timeout allargati, valori attesi cambiati)
+  per far passare una PR: se un test è sbagliato, lo si spiega nella PR.
+- La matrice `docs/regression-matrix.md` va aggiornata a ogni funzionalità nuova; quando un
+  criterio non è esposto via HTTP, la copertura in integrazione va indicata lì.
+- Il job `test-guard` della CI (in locale `npm run test:guard`) fallisce se un test sparisce o
+  è rinominato rispetto alla base.
+- Rimozione di una funzionalità: l'etichetta `rimozione-funzionalita` la applica solo Daniele
+  (o l'orchestratore), dopo che la descrizione della PR spiega il perché (sezione "Rimozione
+  funzionalità"). Gli agenti non la applicano mai.
+- Ogni ticket ha la sezione "## Test e2e" (vedi il formato del pianificatore).
+
 ## Regole di dominio
 
 - **Multi-tenant**: ogni azienda cliente è un tenant. Ogni tabella con dati di un cliente ha
@@ -73,7 +87,7 @@ pipeline completa: chiedi a Daniele se in dubbio.
 - Stack: Next.js 16 (App Router) + TypeScript + Postgres (Drizzle ORM) + Zod.
 - Codice, nomi e commenti in inglese; testi dell'interfaccia in italiano.
 - Database locale: `npm run db:up` (Docker, porta 5433). I test usano `vistato_test`.
-- Migrazioni: modifica `src/db/schema.ts` → `npm run db:generate` → rileggi lo SQL in `drizzle/`.
+- Migrazioni: modifica `src/db/schema/` → `npm run db:generate` → rileggi lo SQL in `drizzle/`.
 - Test: unitari in `tests/unit/`, integrazione in `tests/integration/`, end-to-end in `e2e/`.
 - Prima di ogni commit: `npm run check`. Prima di una PR pronta: anche `npm run test:e2e`.
 - Segreti solo in `.env` (mai nel repository). Le variabili sono documentate in `.env.example`.
