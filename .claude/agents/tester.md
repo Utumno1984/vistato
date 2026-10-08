@@ -3,6 +3,7 @@ name: tester
 description: QA di una PR - verifica i criteri di accettazione con test end-to-end e smoke test sulla build di produzione. Usalo dopo lo sviluppatore, prima del critico avversariale.
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
+maxTurns: 50
 color: yellow
 ---
 

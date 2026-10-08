@@ -19,11 +19,21 @@ pipeline, senza saltare passaggi:
    2. **tester** → QA: criteri di accettazione, end-to-end, smoke test.
    3. **critico-avversariale** → red team del diff.
    4. Se tester o critico segnalano problemi, torna allo **sviluppatore** con l'elenco
-      completo, poi ripeti tester e critico. Dopo 3 giri senza esito positivo fermati e
+      completo, poi ripeti tester e critico. Dopo 2 giri senza esito positivo fermati e
       chiedi a Daniele.
    5. Quando tester = QA SUPERATO e critico = APPROVATO: `gh pr ready <N>` e avvisa Daniele
       con un riepilogo (cosa cambia, test aggiunti, note del critico).
 3. **Il merge lo fa solo Daniele.** Nessun agente fa merge, push su `main` o push forzati.
+
+### Budget dei token (piano Pro)
+
+Le quote di utilizzo (5 ore e settimanale) sono il vincolo: usa il modello più leggero adatto.
+
+- Sessioni headless (`claude -p`) e orchestratore: sempre `--model sonnet`.
+- Modelli degli agenti: pianificatore e critico `opus`, sviluppatore e tester `sonnet`;
+  ogni agente ha un `maxTurns` nel frontmatter.
+- Critico: `effort: medium`; dal secondo giro verifica solo i punti segnalati e il diff delle
+  correzioni, non rifà il red team completo. Massimo 2 giri.
 
 Lavori piccoli e mirati (una correzione di testo, una domanda sul codice) non richiedono la
 pipeline completa: chiedi a Daniele se in dubbio.
