@@ -1,0 +1,84 @@
+{
+  "config": {
+    "configFile": "/repo/playwright.config.ts",
+    "rootDir": "/repo/e2e",
+    "projects": [
+      { "id": "chromium", "name": "chromium", "testDir": "/repo/e2e" },
+      { "id": "firefox", "name": "firefox", "testDir": "/repo/e2e" }
+    ]
+  },
+  "suites": [
+    {
+      "title": "smoke.spec.ts",
+      "file": "smoke.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "home page renders",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            { "expectedStatus": "passed", "projectId": "chromium", "projectName": "chromium", "results": [], "status": "skipped" },
+            { "expectedStatus": "passed", "projectId": "firefox", "projectName": "firefox", "results": [], "status": "skipped" }
+          ],
+          "id": "4219922fea2e2bd3c691-fd727f2502bfb36b7e4d",
+          "file": "smoke.spec.ts",
+          "line": 16,
+          "column": 5
+        }
+      ]
+    },
+    {
+      "title": "invoices/list.spec.ts",
+      "file": "invoices/list.spec.ts",
+      "column": 0,
+      "line": 0,
+      "suites": [
+        {
+          "title": "Invoice list",
+          "file": "invoices/list.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "shows the empty state",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                { "expectedStatus": "passed", "projectId": "chromium", "projectName": "chromium", "results": [], "status": "skipped" }
+              ],
+              "id": "aaaa-1",
+              "file": "invoices/list.spec.ts",
+              "line": 5,
+              "column": 7
+            }
+          ],
+          "suites": [
+            {
+              "title": "filters",
+              "file": "invoices/list.spec.ts",
+              "line": 10,
+              "column": 8,
+              "specs": [
+                {
+                  "title": "by supplier",
+                  "ok": true,
+                  "tags": [],
+                  "tests": [
+                    { "expectedStatus": "passed", "projectId": "chromium", "projectName": "chromium", "results": [], "status": "skipped" }
+                  ],
+                  "id": "aaaa-2",
+                  "file": "invoices/list.spec.ts",
+                  "line": 12,
+                  "column": 9
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": []
+}
