@@ -19,6 +19,10 @@ import { z } from "zod";
 import { getDb, type Database } from "@/db/client";
 import { ValidationError } from "@/db/errors";
 
+import type { ModuleCode } from "@/db/catalog/modules";
+import { hasModule } from "@/db/entitlements";
+
+import { tenantModuleOperations, type TenantModules } from "./modules";
 import type { TenantId } from "./tenant-id";
 import { tenantUsers, type TenantUsers } from "./users";
 
@@ -33,10 +37,22 @@ export {
   type UpdateUserInput,
 } from "./users";
 
+export {
+  activateModuleInputSchema,
+  type ActivateModuleOptions,
+  type TenantModule,
+  type TenantModuleEntry,
+  type TenantModules,
+} from "./modules";
+export type { ModuleCode };
+
 export interface TenantScope {
   /** The validated tenant ID every operation is bound to. */
   readonly tenantId: string;
   readonly users: TenantUsers;
+  readonly modules: TenantModules;
+  /** Same rule as the standalone `hasModule` (`@/db/entitlements`), bound to this tenant. */
+  hasModule(code: ModuleCode, at?: Date): Promise<boolean>;
 }
 
 const forTenantArgsSchema = z.object({ tenantId: z.uuid("ID del tenant non valido") });
@@ -56,5 +72,7 @@ export function forTenant(tenantId: string, db?: Database): TenantScope {
   return Object.freeze({
     tenantId: id,
     users: Object.freeze(tenantUsers(database, id)),
+    modules: Object.freeze(tenantModuleOperations(database, id)),
+    hasModule: (code: ModuleCode, at?: Date) => hasModule(id, code, at, database),
   });
 }
