@@ -9,8 +9,13 @@ import { forTenant } from "@/db/tenant-scope";
 import { testDb } from "../helpers/db";
 
 const cookieHeader = vi.hoisted(() => ({ value: undefined as string | undefined }));
+const pathHeader = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
-  headers: async () => new Headers(cookieHeader.value ? { cookie: cookieHeader.value } : {}),
+  headers: async () => {
+    const h = new Headers(cookieHeader.value ? { cookie: cookieHeader.value } : {});
+    if (pathHeader.value) h.set("x-vistato-path", pathHeader.value);
+    return h;
+  },
 }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -46,6 +51,16 @@ describe("requirePageSession", () => {
     const auth = await requirePageSession();
     expect(auth.user.firstName).toBe("Mario");
     expect(auth.tenant.businessName).toBe("Acme S.r.l.");
+  });
+
+  it("rebuilds next from the path set by the proxy, and ignores an unsafe one", async () => {
+    const { requirePageSession } = await import("@/lib/auth/page-session");
+    cookieHeader.value = "vistato_session=invented";
+    pathHeader.value = "/fatture?page=2";
+    await expect(requirePageSession()).rejects.toThrow("REDIRECT /login?next=%2Ffatture%3Fpage%3D2");
+    pathHeader.value = "//evil.example";
+    await expect(requirePageSession()).rejects.toThrow("REDIRECT /login?next=%2Ffatture");
+    pathHeader.value = undefined;
   });
 
   it("redirects once the user is disabled", async () => {

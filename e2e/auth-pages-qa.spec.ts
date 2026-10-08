@@ -48,6 +48,9 @@ test("QA: after Esci the browser back button does not show the protected page", 
   await page.getByRole("button", { name: "Esci" }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goBack();
+  // Right after going back, without a reload: the protected page must not be on screen.
+  await expect(page.getByRole("heading", { name: "Fatture" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Esci" })).toHaveCount(0);
   await page.reload();
   await expect(page).toHaveURL(/\/login/);
   await expect(page.getByRole("heading", { name: "Fatture" })).toHaveCount(0);
@@ -57,6 +60,7 @@ test("QA: a well-formed but unknown session token (valid shape) is sent to /logi
   await context.addCookies([{ name: "vistato_session", value: "A".repeat(43), url: baseURL! }]);
   await page.goto("/fatture");
   await expect(page).toHaveURL(/\/login/);
+  await expect(page).toHaveURL(/next=%2Ffatture/);
 });
 
 test("QA: the proxy redirect never points to a host taken from Host or X-Forwarded-Host", async () => {
@@ -73,22 +77,42 @@ test("QA: the proxy redirect never points to a host taken from Host or X-Forward
   }
 });
 
-test("QA: duplicate session cookies (one invented, one valid-shaped) do not open /fatture", async () => {
-  // Passes the optimistic proxy or is redirected; either way the page must not render for an unknown token.
-  const page = await new Promise<string>((resolve, reject) => {
-    const req = http.request(
-      { host: "127.0.0.1", port: 3100, path: "/fatture", headers: { cookie: `vistato_session=${"B".repeat(43)}; vistato_session=${"C".repeat(43)}` } },
-      (r) => {
-        let body = "";
-        r.on("data", (c) => (body += c));
-        r.on("end", () => resolve(`${r.statusCode} ${r.headers.location ?? ""} ${body.includes("Esci") ? "HAS-ESCI" : ""}`));
-      },
-    );
+function rawBody(path: string, cookie: string): Promise<{ status: number; location?: string; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port: 3100, path, headers: { cookie } }, (r) => {
+      let body = "";
+      r.on("data", (c) => (body += c));
+      r.on("end", () => resolve({ status: r.statusCode ?? 0, location: r.headers.location, body }));
+    });
     req.on("error", reject);
     req.end();
   });
-  expect(page).not.toMatch(/^500/);
-  expect(page).not.toContain("HAS-ESCI");
+}
+
+test("QA: duplicate session cookies (one invented, one valid-shaped) do not open /fatture", async () => {
+  const res = await rawBody("/fatture", `vistato_session=${"B".repeat(43)}; vistato_session=${"C".repeat(43)}`);
+  expect(res.status).not.toBe(500);
+  expect(res.body).not.toContain("Esci");
+});
+
+test("QA: with a valid and an invented session cookie the first one wins, in both orders", async ({ page, context }) => {
+  const tenant = await createTestTenant({ users: [{ role: "OWNER" }] });
+  const user = tenant.users[0];
+  await page.goto("/login");
+  await login(page, user.email, user.password);
+  await expect(page).toHaveURL(/\/fatture$/);
+  const valid = (await context.cookies()).find((c) => c.name === "vistato_session")!.value;
+  const invented = "D".repeat(43);
+
+  const validFirst = await rawBody("/fatture", `vistato_session=${valid}; vistato_session=${invented}`);
+  expect(validFirst.status).toBe(200);
+  expect(validFirst.body).toContain("Esci");
+
+  const inventedFirst = await rawBody("/fatture", `vistato_session=${invented}; vistato_session=${valid}`);
+  expect(inventedFirst.body).not.toContain("Esci");
+  expect(inventedFirst.status).toBeGreaterThanOrEqual(300);
+  expect(inventedFirst.status).toBeLessThan(400);
+  expect(inventedFirst.location ?? "").toContain("/login");
 });
 
 test("QA: login form fields are labelled and keyboard reachable", async ({ page }) => {

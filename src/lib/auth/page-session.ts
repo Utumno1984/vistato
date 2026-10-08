@@ -1,6 +1,8 @@
 import { cache } from "react";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { REQUEST_PATH_HEADER, safeNextPath } from "./next-path";
 import { getSessionFromCookies, type AuthContext } from "./session";
 
 /**
@@ -10,6 +12,10 @@ import { getSessionFromCookies, type AuthContext } from "./session";
  */
 export const requirePageSession = cache(async (): Promise<AuthContext> => {
   const auth = await getSessionFromCookies();
-  if (!auth) redirect("/login");
+  if (!auth) {
+    // The proxy tells us the requested path; it is re-validated, never trusted.
+    const asked = (await headers()).get(REQUEST_PATH_HEADER);
+    redirect(asked ? `/login?next=${encodeURIComponent(safeNextPath(asked))}` : "/login");
+  }
   return auth;
 });
