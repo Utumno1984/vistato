@@ -52,7 +52,15 @@ export class DuplicateEmailError extends Error {
   }
 }
 
-const UNIQUE_VIOLATION = "23505";
+/** Another user already uses this email as a login (emails with a password are globally unique). */
+export class DuplicateLoginEmailError extends Error {
+  constructor(readonly email: string) {
+    super("Another user already logs in with this email");
+    this.name = "DuplicateLoginEmailError";
+  }
+}
+
+const UNIQUE_VIOLATION ="23505";
 const FOREIGN_KEY_VIOLATION = "23503";
 
 /**
