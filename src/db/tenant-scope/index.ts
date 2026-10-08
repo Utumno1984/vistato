@@ -24,6 +24,7 @@ import { hasModule } from "@/db/entitlements";
 
 import { tenantModuleOperations, type TenantModules } from "./modules";
 import type { TenantId } from "./tenant-id";
+import { tenantInvoices, type TenantInvoices } from "./invoices";
 import { tenantUsers, type TenantUsers } from "./users";
 
 // Application code cannot import `@/db/schema` (ESLint): the types it needs come from here.
@@ -36,6 +37,15 @@ export {
   type TenantUsers,
   type UpdateUserInput,
 } from "./users";
+
+export {
+  createInvoiceInputSchema,
+  INVOICE_TEXT_MAX_RAW_LENGTH,
+  type CreateInvoiceInput,
+  type Invoice,
+  type InvoiceStatus,
+  type TenantInvoices,
+} from "./invoices";
 
 export {
   activateModuleInputSchema,
@@ -51,6 +61,7 @@ export interface TenantScope {
   readonly tenantId: string;
   readonly users: TenantUsers;
   readonly modules: TenantModules;
+  readonly invoices: TenantInvoices;
   /** Same rule as the standalone `hasModule` (`@/db/entitlements`), bound to this tenant. */
   hasModule(code: ModuleCode, at?: Date): Promise<boolean>;
 }
@@ -73,6 +84,7 @@ export function forTenant(tenantId: string, db?: Database): TenantScope {
     tenantId: id,
     users: Object.freeze(tenantUsers(database, id)),
     modules: Object.freeze(tenantModuleOperations(database, id)),
+    invoices: Object.freeze(tenantInvoices(database, id)),
     hasModule: (code: ModuleCode, at?: Date) => hasModule(id, code, at, database),
   });
 }
