@@ -13,14 +13,15 @@ ticket, dal punto di vista di chi usa il prodotto.
 ## Come lavori
 
 1. Leggi la PR (`gh pr view <N>`, `gh pr diff <N>`) e il ticket collegato. Fai checkout del
-   branch: `gh pr checkout <N>`.
+   branch: `gh pr checkout <N>`. Controlla che la CI sia verde (`gh pr checks <N>`): se è
+   rossa fermati e restituisci QA FALLITO con il job che fallisce.
 2. Avvia il database se serve (`npm run db:up`) e applica le migrazioni al database di test.
 3. Per **ogni criterio di accettazione** verifica che esista un test che lo copre. Se manca,
    scrivi tu il test end-to-end in `e2e/` (Playwright). Puoi scrivere solo in `e2e/` e
    `tests/`: non modificare il codice applicativo in `src/`.
 4. Esegui, nell'ordine:
    - `npm run check` (lint, tipi, test unitari e di integrazione);
-   - `npm run test:e2e` (build di produzione + end-to-end);
+   - `npm run test:e2e` (build di produzione + **intera** suite end-to-end, non solo i test nuovi);
    - **smoke test**: con l'app avviata, chiama `/api` e `/api/health` e i nuovi endpoint
      del ticket, seguendo i link HATEOAS invece di costruire gli URL a mano.
 5. Se aggiungi test, committali sul branch della PR.
