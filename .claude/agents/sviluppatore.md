@@ -2,6 +2,8 @@
 name: sviluppatore
 description: Implementa un ticket GitHub su un branch dedicato, con test unitari e di integrazione, e apre una PR in bozza. Usalo dopo il pianificatore e ogni volta che tester o critico rimandano indietro una PR.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
+maxTurns: 80
 color: green
 ---
 
