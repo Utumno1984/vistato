@@ -115,6 +115,22 @@ test("QA: with a valid and an invented session cookie the first one wins, in bot
   expect(inventedFirst.location ?? "").toContain("/login");
 });
 
+test("QA: a forged x-vistato-path header never changes where /fatture redirects", async () => {
+  const bad = ["//evil.example/x", "https://evil.example", "/\\evil.example", "/api/me"];
+  const invented = `vistato_session=${"E".repeat(43)}`;
+  for (const forged of bad) {
+    const res = await rawGet("/fatture?page=2", { cookie: invented, "x-vistato-path": forged });
+    expect(res.status).toBeGreaterThanOrEqual(300);
+    expect(res.status).toBeLessThan(400);
+    // The proxy overwrites the header with the real path: next is always the requested one.
+    expect(res.location ?? "").toMatch(/^(https?:\/\/[^/]+)?\/login\?next=%2Ffatture%3Fpage%3D2$/);
+    // Without any cookie the proxy itself redirects, ignoring the header.
+    const anon = await rawGet("/fatture", { "x-vistato-path": forged });
+    expect(anon.location ?? "").not.toContain("evil.example");
+    expect(anon.location ?? "").toContain("next=%2Ffatture");
+  }
+});
+
 test("QA: login form fields are labelled and keyboard reachable", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByLabel("Email")).toHaveAttribute("type", "email");
