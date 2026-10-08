@@ -1,8 +1,12 @@
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ModuleCode } from "@/db/catalog/modules";
 import { hasModule } from "@/db/entitlements";
 import { TenantNotFoundError, ValidationError } from "@/db/errors";
+import { requireTestDatabaseUrl } from "@/db/migrate";
+import * as schema from "@/db/schema";
 import { getModuleByCode, listModuleCatalog } from "@/db/platform/modules";
 import { createTenant, setTenantStatus } from "@/db/platform/tenants";
 import { forTenant } from "@/db/tenant-scope";
@@ -137,6 +141,25 @@ describe("hasModule", () => {
   it("compares instants in UTC whatever the time zone of the session", async () => {
     await activate(tenantA, "cost_centers", new Date("2026-03-29T00:30:00.000Z"), new Date("2026-03-29T01:30:00.000Z"));
     // 2026-03-29 is the Europe/Rome DST change: 02:00 local jumps to 03:00.
+    // The queries below run on a dedicated single-connection client whose session time zone
+    // is UTC+14, so the SET cannot be lost in a pool nor leak into other tests.
+    const zoned = postgres(requireTestDatabaseUrl(), {
+      max: 1,
+      onnotice: () => {},
+      connection: { TimeZone: "Pacific/Kiritimati" },
+    });
+    try {
+      const [{ TimeZone: sessionZone }] = await zoned`show time zone`;
+      expect(sessionZone).toBe("Pacific/Kiritimati");
+      const zonedDb = drizzle(zoned, { schema });
+      const hasZoned = (at: Date) => hasModule(tenantA, "cost_centers", at, zonedDb);
+      expect(await hasZoned(new Date("2026-03-29T01:29:59.999Z"))).toBe(true);
+      expect(await hasZoned(new Date("2026-03-29T01:30:00.000Z"))).toBe(false);
+      expect(await hasZoned(new Date("2026-03-29T00:30:00.000Z"))).toBe(true);
+      expect(await hasZoned(new Date("2026-03-29T00:29:59.999Z"))).toBe(false);
+    } finally {
+      await zoned.end();
+    }
     expect(await has(tenantA, "cost_centers", new Date("2026-03-29T01:29:59.999Z"))).toBe(true);
     expect(await has(tenantA, "cost_centers", new Date("2026-03-29T01:30:00.000Z"))).toBe(false);
     expect(await has(tenantA, "cost_centers", new Date("2026-03-29T00:29:59.999Z"))).toBe(false);
@@ -175,7 +198,26 @@ describe("forTenant(t).modules", () => {
       activate(tenantA, "payment_schedule", NOW, null),
       activate(tenantA, "payment_schedule", PAST),
     ]);
-    expect(await rows(tenantA)).toHaveLength(1);
+    const finalRows = await rows(tenantA);
+    expect(finalRows).toHaveLength(1);
+    // The surviving row is one of the submitted combinations, never a mix of them.
+    const [row] = finalRows;
+    expect(row.status).toBe("ACTIVE");
+    const state = [row.activated_at.toISOString(), row.expires_at?.toISOString() ?? null];
+    expect([
+      [PAST.toISOString(), FUTURE.toISOString()],
+      [NOW.toISOString(), null],
+      [PAST.toISOString(), null],
+    ]).toContainEqual(state);
+  });
+
+  it("does not let options override the module code", async () => {
+    const options = { activatedAt: PAST, code: "approvals" } as unknown as { activatedAt: Date };
+    const row = await scope(tenantA).modules.activate("cost_centers", options);
+    const [costCenters] = await testSql()`select id from modules where code = 'cost_centers'`;
+    expect(row.moduleId).toBe(costCenters.id);
+    const list = await scope(tenantA).modules.list();
+    expect(list.map((r) => r.code)).toEqual(["cost_centers"]);
   });
 
   it("cancels a module, keeping its dates, without touching tenant B", async () => {

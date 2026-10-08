@@ -75,7 +75,7 @@ export function tenantModuleOperations(db: Database, tenantId: TenantId): Tenant
     },
 
     async activate(code, options) {
-      const parsed = activateModuleInputSchema.safeParse({ code, ...options });
+      const parsed = activateModuleInputSchema.safeParse({ ...options, code });
       if (!parsed.success) throw ValidationError.fromZod(parsed.error);
       const { activatedAt, expiresAt } = parsed.data;
 
