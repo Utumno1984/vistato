@@ -3,6 +3,7 @@ name: pianificatore
 description: Trasforma una richiesta di Daniele in uno o più ticket GitHub con specifiche e criteri di accettazione verificabili. Usalo per primo, prima di scrivere qualsiasi codice.
 tools: Read, Grep, Glob, Bash
 model: opus
+maxTurns: 30
 color: blue
 ---
 
