@@ -55,3 +55,66 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # Fails when a vitest/Playwright test disappears or is renamed compared to the PR base, unless
+  # the PR has the label `rimozione-funzionalita` and a valid "## Rimozione funzionalità" section.
+  # No secrets and only the plain pull_request event: this job executes code of the PR. Labels and
+  # body are read at run time (a re-run after adding the label sees it) and passed as files.
+  test-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Skip on push
+        if: github.event_name != 'pull_request'
+        run: 'echo "guardia saltata: già applicata sulla PR"'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'pull_request'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        if: github.event_name == 'pull_request'
+        run: npm ci
+      - name: Compare tests with the PR base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d "$RUNNER_TEMP/test-guard-XXXXXX")"
+          cleanup() {
+            git worktree remove --force "$tmp/base" 2>/dev/null || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          # Labels and body now, not from the (possibly stale) event payload.
+          gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.labels' > "$tmp/labels.json"
+          gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.body // ""' > "$tmp/body.md"
+
+          # The merge-base stays correct for stacked PRs and when the base moves on.
+          merge_base="$(git merge-base "$BASE_SHA" HEAD)"
+          git worktree add --detach "$tmp/base" "$merge_base"
+          if git diff --quiet "$merge_base" HEAD -- package-lock.json; then
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$tmp/base/node_modules"
+          else
+            (cd "$tmp/base" && npm ci)
+          fi
+
+          # Always the script of HEAD: the base may not contain it. Exit 2 on empty/failed list.
+          node_modules/.bin/tsx "$GITHUB_WORKSPACE/scripts/list-tests.ts" --root "$tmp/base" > "$tmp/base.json"
+          node_modules/.bin/tsx "$GITHUB_WORKSPACE/scripts/list-tests.ts" --root "$GITHUB_WORKSPACE" > "$tmp/head.json"
+
+          node_modules/.bin/tsx "$GITHUB_WORKSPACE/scripts/check-test-removal.ts" \
+            --base "$tmp/base.json" --head "$tmp/head.json" \
+            --labels-file "$tmp/labels.json" --body-file "$tmp/body.md"
