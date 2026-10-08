@@ -17,6 +17,7 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) => (name === "vistato_session" && cookieStore.value ? { name, value: cookieStore.value } : undefined),
   }),
+  headers: async () => new Headers(cookieStore.value ? { cookie: `vistato_session=${cookieStore.value}` } : {}),
 }));
 
 const BASE = "http://localhost:3100";

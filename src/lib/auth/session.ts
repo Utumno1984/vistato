@@ -3,13 +3,14 @@
  * reads the cookie and resolves it (via `resolveSession`, the database is the only source
  * of the user and the tenant).
  */
-import { cookies } from "next/headers";
+import { headers } from "next/headers";
 
 import { resolveSession, type ResolvedSession } from "@/db/auth";
 import { forTenant, type TenantScope } from "@/db/tenant-scope";
 import { forbiddenOrigin, unauthenticated } from "@/lib/http/errors";
 
-import { readSessionToken, SESSION_COOKIE_NAME } from "./session-cookie";
+import { readSessionToken } from "./session-cookie";
+import { parseSessionToken } from "./session-token";
 
 export interface AuthContext {
   sessionId: string;
@@ -78,7 +79,8 @@ export async function requireSession(request: Request): Promise<AuthContext | Re
 
 /** For Server Components (pages): the session from the request cookies, or null. */
 export async function getSessionFromCookies(): Promise<AuthContext | null> {
-  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  // Same parser as the API routes (first cookie wins); the Next cookie store would pick the last one.
+  const token = parseSessionToken((await headers()).get("cookie"));
   const session = token ? await resolveSession(token) : null;
   return session ? toContext(session) : null;
 }

@@ -1,7 +1,9 @@
 /** The session cookie: name, reading from a request, and the Set-Cookie headers. */
 import { SESSION_DURATION_MS } from "@/db/auth";
 
-export const SESSION_COOKIE_NAME = "vistato_session";
+import { parseSessionToken, SESSION_COOKIE_NAME } from "./session-token";
+
+export { SESSION_COOKIE_NAME };
 
 const MAX_AGE_SECONDS = Math.floor(SESSION_DURATION_MS / 1000);
 
@@ -10,16 +12,9 @@ function secureAttribute(): string {
   return process.env.SESSION_COOKIE_SECURE === "false" ? "" : "; Secure";
 }
 
-/** The value of the first `vistato_session` cookie of a `Cookie` header, or null. */
+/** The value of the first `vistato_session` cookie of a request, or null. */
 export function readSessionToken(request: Request): string | null {
-  const header = request.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const separator = part.indexOf("=");
-    if (separator < 0) continue;
-    if (part.slice(0, separator).trim() === SESSION_COOKIE_NAME) return part.slice(separator + 1).trim();
-  }
-  return null;
+  return parseSessionToken(request.headers.get("cookie"));
 }
 
 /** `Set-Cookie` value that stores the token for 7 days. The token is base64url: no escaping needed. */
