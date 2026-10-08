@@ -41,7 +41,7 @@ cp .env.example .env
 npm install
 npm run db:up      # Postgres on port 5433, with a separate test database
 npm run db:migrate # apply the migrations to the development database
-npm run db:seed    # write the module catalogue (idempotent)
+npm run db:seed    # module catalogue + demo tenant/user if DEMO_USER_PASSWORD is set (idempotent)
 npm run dev        # http://localhost:3000 — API entry point at /api
 ```
 

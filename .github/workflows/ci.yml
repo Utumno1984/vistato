@@ -27,6 +27,7 @@ jobs:
     env:
       DATABASE_URL: postgres://vistato:vistato@localhost:5432/vistato_test
       TEST_DATABASE_URL: postgres://vistato:vistato@localhost:5432/vistato_test
+      DEMO_USER_PASSWORD: ci-demo-password-not-a-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
