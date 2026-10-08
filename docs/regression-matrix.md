@@ -41,4 +41,4 @@ Regole di scrittura:
 | Strumenti di test: db:migrate:test, guard DB di test, reset `scripts/migrate-test.ts` | no | `tests/integration/migrate-test-script.test.ts` "migrates the database at TEST_DATABASE_URL"; `tests/integration/test-database-guard.test.ts` "resetDb refuses when TEST_DATABASE_URL points to it"; `tests/integration/reset-db.test.ts` "the next test starts with empty tenant tables and the full module catalogue" |
 | Lint di isolamento tenant `eslint.config.mjs` | no | `tests/unit/tenant-isolation-lint.test.ts` "point to forTenant in the message" |
 | Script db:seed (il wrapper; la funzione seedDatabase è coperta sopra) `scripts/seed.ts` | no | non coperto |
-| Script di stampa errori con catena di cause `scripts/report-error.ts` | no | non coperto |
+| Script di stampa errori `scripts/report-error.ts` (parziale: è esercitato solo dal percorso di errore di migrate-test; la stampa della catena "Caused by:" non è coperta) | no | `tests/integration/migrate-test-script.test.ts` "refuses a TEST_DATABASE_URL whose database name does not end with _test" |

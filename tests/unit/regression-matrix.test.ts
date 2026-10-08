@@ -63,8 +63,35 @@ function requiredSources(): string[] {
   ].sort();
 }
 
+const DISABLING_MODIFIERS = new Set(["skip", "todo", "skipIf", "fixme", "fail", "fails"]);
+
+/**
+ * Looks for a test whose title is exactly `name`: `it("name"`, `test("name"` (any quote),
+ * optionally with modifiers such as `.skip`. Comment lines are ignored. The name is searched
+ * literally (never as a regular expression).
+ */
+export function findTest(source: string, name: string): "found" | "disabled" | "missing" {
+  const code = source
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\b(?:it|test)((?:\\.\\w+)*)\\s*\\(\\s*(["'\`])${escaped}\\2`, "g");
+  let result: "disabled" | "missing" = "missing";
+  for (const match of code.matchAll(pattern)) {
+    const modifiers = match[1].split(".").filter(Boolean);
+    if (modifiers.some((m) => DISABLING_MODIFIERS.has(m))) result = "disabled";
+    else return "found";
+  }
+  return result;
+}
+
 /** Returns one message per problem found in the matrix; empty when it is sound. */
-function checkMatrix(markdown: string, required: string[]): string[] {
+function checkMatrix(
+  markdown: string,
+  required: string[],
+  override?: (file: string, name: string) => ReturnType<typeof findTest> | undefined,
+): string[] {
   const rows = parseMatrix(markdown);
   const problems: string[] = [];
 
@@ -92,8 +119,13 @@ function checkMatrix(markdown: string, required: string[]): string[] {
       const path = join(ROOT, file);
       if (!existsSync(path)) {
         problems.push(`Test file ${file} (row "${feature}") does not exist`);
-      } else if (!readFileSync(path, "utf8").includes(name)) {
-        problems.push(`Test "${name}" (row "${feature}") not found in ${file}`);
+      } else {
+        const status = override?.(file, name) ?? findTest(readFileSync(path, "utf8"), name);
+        if (status === "missing") {
+          problems.push(`Test "${name}" (row "${feature}") not found in ${file}`);
+        } else if (status === "disabled") {
+          problems.push(`Test "${name}" (row "${feature}") is skipped or todo in ${file}`);
+        }
       }
     }
   }
@@ -149,6 +181,31 @@ describe("regression matrix", () => {
     const edited = matrix.replace("includes only the allowed links", "includes only the (allowed) links.*");
     const problems = checkMatrix(edited, requiredSources());
     expect(problems.some((p) => p.includes("includes only the (allowed) links.*"))).toBe(true);
+  });
+
+  it("matches the exact test title, not a substring, a comment or a skipped test", () => {
+    expect(findTest(`it("does a thing", () => {});`, "does a thing")).toBe("found");
+    expect(findTest(`  test('does a thing', async () => {});`, "does a thing")).toBe("found");
+    expect(findTest(`it("does a thing quickly", () => {});`, "does a thing")).toBe("missing");
+    expect(findTest(`it("really does a thing", () => {});`, "does a thing")).toBe("missing");
+    expect(findTest(`const label = "does a thing";`, "does a thing")).toBe("missing");
+    expect(findTest(`// it("does a thing", () => {});`, "does a thing")).toBe("missing");
+    expect(findTest(`it.skip("does a thing", () => {});`, "does a thing")).toBe("disabled");
+    expect(findTest(`test.todo("does a thing");`, "does a thing")).toBe("disabled");
+    expect(findTest(`it.skipIf(x)("does a thing", () => {});`, "does a thing")).toBe("missing");
+    expect(findTest(`it.skip("a", () => {});\nit("a", () => {});`, "a")).toBe("found");
+  });
+
+  it("searches the title literally, with regular expression characters", () => {
+    expect(findTest(`it("list() of A [x] returns a+b", () => {});`, "list() of A [x] returns a+b")).toBe("found");
+    expect(findTest(`it("list() of A", () => {});`, "list.. of A")).toBe("missing");
+  });
+
+  it("fails when a cited test is skipped or only mentioned in a comment", () => {
+    const problems = checkMatrix(matrix, requiredSources(), (file, name) =>
+      file === "tests/unit/hateoas.test.ts" && name === "requires a self link" ? "disabled" : undefined,
+    );
+    expect(problems.some((p) => p.includes("requires a self link") && p.includes("skipped"))).toBe(true);
   });
 
   it("fails on a duplicate row and on a row with no test that is not marked non coperto", () => {

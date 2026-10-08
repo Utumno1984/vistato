@@ -13,8 +13,10 @@ test("regression: home page has the expected document metadata", async ({ page }
 
 test("regression: home page shows the heading and the tagline", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Vistato" })).toBeVisible();
-  await expect(page.getByText("Approvazione delle fatture fornitori")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Vistato", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Vistato");
+  // A RegExp is case-sensitive, unlike a plain string.
+  await expect(page.getByText(/Approvazione delle fatture fornitori/)).toBeVisible();
 });
 
 test("regression: home page loads without page errors or console errors", async ({ page }) => {

@@ -38,12 +38,10 @@ test("regression: every GET link of /api answers 200 with a matching self link",
   const root = await (await request.get("/api")).json();
   const links = Object.entries(root._links as Record<string, Link>);
   let followed = 0;
-  let skipped = 0;
+  const followedRels: string[] = [];
   for (const [rel, link] of links) {
-    if (link.method && link.method !== "GET") {
-      skipped += 1;
-      continue;
-    }
+    if (link.method && link.method !== "GET") continue; // non-GET links are skipped
+    followedRels.push(rel);
     const res = await request.get(link.href);
     expect(res.status(), `link "${rel}" (${link.href})`).toBe(200);
     expect(res.headers()["content-type"]).toContain("application/json");
@@ -53,7 +51,7 @@ test("regression: every GET link of /api answers 200 with a matching self link",
   }
   // Guard against a walker that passes on an empty set of links.
   expect(followed).toBeGreaterThanOrEqual(2);
-  expect(followed + skipped).toBe(links.length);
+  expect(followedRels).toEqual(expect.arrayContaining(["self", "health"]));
 });
 
 // Next.js (16.3.x) answers 405 for a method the route file does not export.
