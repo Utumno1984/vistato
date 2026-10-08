@@ -1,0 +1,1 @@
+CREATE INDEX "tenant_modules_module_id_idx" ON "tenant_modules" USING btree ("module_id");
