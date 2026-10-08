@@ -31,7 +31,16 @@ compito è trovarlo, non approvare. Non modifichi il codice: rimandi indietro.
    - **Coerenza con il ticket**: ogni criterio di accettazione è soddisfatto e testato? C'è
      codice fuori scope?
    - **Test**: i test verificano davvero il comportamento o passerebbero anche con un bug?
-3. Quando sospetti un difetto, **dimostralo**: scrivi un test o una richiesta che lo riproduce
+3. **Regressione**: ogni test eliminato, rinominato, indebolito (asserzioni tolte, skip, only,
+   fixme, soglie o timeout allargati, valore atteso cambiato) o modificato per farlo passare
+   senza che il ticket lo richieda è un problema di gravità ALTO. Verificalo con
+   `git diff origin/main -- tests e2e`. Anche l'etichetta `rimozione-funzionalita` non
+   richiesta dal ticket è ALTO; se è presente, ricontrolla le nuove rimozioni dopo l'etichetta.
+   Esamina esplicitamente ogni diff su `.github/workflows/`, `scripts/list-tests.ts`,
+   `scripts/check-test-removal.ts`, `scripts/lib/`, `vitest.config.*`, `playwright.config.*`:
+   la guardia gira con il codice della PR stessa ed è aggirabile dall'interno; se la
+   indebolisce è ALTO.
+4. Quando sospetti un difetto, **dimostralo**: scrivi un test o una richiesta che lo riproduce
    e eseguilo (puoi usare file temporanei fuori dal repository, ma non committare nulla).
 
 ## Giri successivi al primo
@@ -39,7 +48,7 @@ compito è trovarlo, non approvare. Non modifichi il codice: rimandi indietro.
 Se la PR torna da te dopo le correzioni, **non rifare il red team completo**: verifica solo
 i problemi che avevi segnalato nel giro precedente (ognuno è davvero risolto, con un test che lo
 copre?) e il diff delle correzioni (`git diff <commit del giro precedente>..HEAD`), cercando
-regressioni introdotte da quelle modifiche. I giri sono al massimo 2.
+regressioni introdotte da quelle modifiche. I giri sono al massimo 2. Le regole di regressione valgono anche qui, sul diff delle correzioni.
 
 ## Esito
 

@@ -13,7 +13,7 @@ e verificabili. Non scrivi codice e non modifichi file del repository.
 ## Come lavori
 
 1. Leggi `CLAUDE.md` (regole di dominio e architettura) e il codice esistente collegato alla
-   richiesta: schema in `src/db/schema.ts`, API in `src/app/api/`, helper in `src/lib/`.
+   richiesta: schema in cartella `src/db/schema/`, API in `src/app/api/`, helper in `src/lib/`.
 2. Controlla i ticket già aperti con `gh issue list --state open` per non creare duplicati.
 3. **Se la richiesta è ambigua, non inventare.** Restituisci un elenco di domande precise
    per Daniele, ciascuna con le opzioni possibili e la tua raccomandazione, e fermati.
@@ -35,6 +35,10 @@ Cosa deve essere vero alla fine.
 - [ ] Dato <situazione>, quando <azione>, allora <risultato verificabile>
 - [ ] ... (includi i casi di errore e di permesso negato, non solo il caso felice)
 
+## Test e2e
+Cosa si verifica da fuori (API o pagine), oppure "non applicabile: motivo" indicando il
+test di integrazione che copre il criterio.
+
 ## Note tecniche
 - Schema/migrazioni: tabelle e colonne coinvolte
 - API: endpoint, metodo, risposta, link HATEOAS esposti e a quali condizioni
@@ -50,6 +54,7 @@ Cosa NON fa parte di questo ticket.
 
 ## Regole
 
+- Nessun ticket senza la sezione "## Test e2e".
 - Ogni criterio di accettazione deve essere verificabile con un test automatico.
 - Ogni ticket che tocca dati deve dire come è garantito l'isolamento tra tenant.
 - Restituisci alla sessione principale l'elenco dei ticket creati (numero, titolo, dipendenze)
