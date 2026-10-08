@@ -47,8 +47,10 @@ test("login with a wrong content-type or a JSON non-object body answers 400 inva
     headers: { "content-type": "text/plain" },
     data: JSON.stringify({ email: users[0].email, password: users[0].password }),
   });
-  expect([200, 400]).toContain(text.status());
-  if (text.status() === 400) expect((await text.json()).error).toBe("invalid_request");
+  // The login route does not inspect Content-Type: it parses the raw body as JSON. Pinned behaviour:
+  // a valid JSON body is accepted whatever the declared type.
+  expect(text.status()).toBe(200);
+  expect(text.headers()["set-cookie"]).toMatch(/^vistato_session=/);
 
   for (const raw of ["null", "[]", '"x"', "42", ""]) {
     const res = await request.post("/api/auth/login", { headers: { "content-type": "application/json" }, data: raw });
