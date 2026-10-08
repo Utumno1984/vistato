@@ -16,6 +16,8 @@ export default defineConfig({
     command: `npm run build && npm run start -- --port ${PORT}`,
     url: `http://localhost:${PORT}/api/health`,
     reuseExistingServer: !process.env.CI,
+    // The e2e server runs on http://localhost: the session cookie cannot be Secure there.
+    env: { SESSION_COOKIE_SECURE: "false", APP_ORIGIN: `http://localhost:${PORT}` },
     timeout: 180_000,
   },
 });
