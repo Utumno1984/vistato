@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { hasForeignOrigin } from "@/lib/auth/session";
 import { clearedSessionCookie, readSessionToken, sessionCookie } from "@/lib/auth/session-cookie";
@@ -63,6 +63,37 @@ describe("hasForeignOrigin", () => {
     expect(hasForeignOrigin(request("POST", "http://localhost:3100"))).toBe(false);
     expect(hasForeignOrigin(request("POST"))).toBe(false);
     expect(hasForeignOrigin(request("GET", "https://evil.example"))).toBe(false);
+  });
+});
+
+describe("hasForeignOrigin with APP_ORIGIN", () => {
+  // Behind a proxy request.url is the internal address while the browser sends the public Origin.
+  const proxied = (origin?: string) =>
+    new Request("http://localhost:3000/api/x", {
+      method: "POST",
+      headers: origin === undefined ? {} : { origin, host: "app.vistato.it" },
+    });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("accepts the configured public origin (also in a list) although request.url is localhost, and refuses the others", () => {
+    vi.stubEnv("APP_ORIGIN", "https://app.vistato.it");
+    expect(hasForeignOrigin(proxied("https://app.vistato.it"))).toBe(false);
+    expect(hasForeignOrigin(proxied("https://evil.example"))).toBe(true);
+    expect(hasForeignOrigin(proxied("https://app.vistato.it.evil.example"))).toBe(true);
+    expect(hasForeignOrigin(proxied("http://localhost:3000"))).toBe(true);
+    expect(hasForeignOrigin(proxied())).toBe(false);
+    vi.stubEnv("APP_ORIGIN", " https://a.example/ , https://app.vistato.it ");
+    expect(hasForeignOrigin(proxied("https://app.vistato.it"))).toBe(false);
+    expect(hasForeignOrigin(proxied("https://a.example"))).toBe(false);
+  });
+
+  it("falls back to the origin of request.url when APP_ORIGIN is unset, empty or unparsable", () => {
+    for (const value of ["", "  ", "not a url"]) {
+      vi.stubEnv("APP_ORIGIN", value);
+      expect(hasForeignOrigin(proxied("http://localhost:3000"))).toBe(false);
+      expect(hasForeignOrigin(proxied("https://app.vistato.it"))).toBe(true);
+    }
   });
 });
 

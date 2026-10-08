@@ -32,14 +32,36 @@ export async function getRequestSession(request: Request): Promise<ResolvedSessi
 }
 
 /**
+ * The origins a state-changing request may come from. `APP_ORIGIN` (comma-separated list of
+ * public origins, e.g. `https://app.vistato.it`) is needed behind a proxy, where `request.url`
+ * is the internal address. When it is not set, only the origin derived from `request.url` is
+ * allowed (development, e2e).
+ */
+function allowedOrigins(request: Request): string[] {
+  const configured = (process.env.APP_ORIGIN ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .flatMap((entry) => {
+      try {
+        return [new URL(entry).origin];
+      } catch {
+        return [];
+      }
+    });
+  return configured.length > 0 ? configured : [new URL(request.url).origin];
+}
+
+/**
  * CSRF defence (with SameSite=Lax): a request that changes state and carries an `Origin`
- * header must come from the server's own origin. No header: allowed (non-browser clients).
+ * header must come from the application's own origin (see `allowedOrigins`). No header:
+ * allowed (non-browser clients).
  */
 export function hasForeignOrigin(request: Request): boolean {
   if (SAFE_METHODS.has(request.method.toUpperCase())) return false;
   const origin = request.headers.get("origin");
   if (origin === null) return false;
-  return origin !== new URL(request.url).origin;
+  return !allowedOrigins(request).includes(origin);
 }
 
 /**

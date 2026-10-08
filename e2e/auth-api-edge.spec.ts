@@ -39,18 +39,20 @@ test("login normalises email case and spaces and ignores extra body fields such 
 test("login with a wrong content-type or a JSON non-object body answers 400 invalid_request", async ({ request }) => {
   const { users } = await createTestTenant({ users: [{ role: "OWNER" }] });
   const form = await request.post("/api/auth/login", { form: { email: users[0].email, password: users[0].password } });
-  expect(form.status()).toBe(400);
-  expect((await form.json()).error).toBe("invalid_request");
+  // A form body is not JSON: 415 (was 400 before the login route checked Content-Type).
+  expect(form.status()).toBe(415);
+  expect((await form.json()).error).toBe("unsupported_media_type");
   expect(form.headers()["set-cookie"]).toBeUndefined();
 
   const text = await request.post("/api/auth/login", {
     headers: { "content-type": "text/plain" },
     data: JSON.stringify({ email: users[0].email, password: users[0].password }),
   });
-  // The login route does not inspect Content-Type: it parses the raw body as JSON. Pinned behaviour:
-  // a valid JSON body is accepted whatever the declared type.
-  expect(text.status()).toBe(200);
-  expect(text.headers()["set-cookie"]).toMatch(/^vistato_session=/);
+  // text/plain would make the login a "simple" cross-site request (login CSRF): 415, no session.
+  // (The assertion was 200 in a281777, which had pinned the wrong behaviour; this PR adds the check.)
+  expect(text.status()).toBe(415);
+  expect((await text.json()).error).toBe("unsupported_media_type");
+  expect(text.headers()["set-cookie"]).toBeUndefined();
 
   for (const raw of ["null", "[]", '"x"', "42", ""]) {
     const res = await request.post("/api/auth/login", { headers: { "content-type": "application/json" }, data: raw });
@@ -104,6 +106,27 @@ test("an authenticated POST from another Origin is rejected on logout even with 
   expect((await client.get("/api/me", { headers: { cookie } })).status()).toBe(200);
   expect((await client.post("/api/auth/logout", { headers: { cookie } })).status()).toBe(204);
   await client.dispose();
+});
+
+test("login from a foreign Origin answers 403 forbidden_origin with no cookie; the own Origin and no Origin are accepted", async ({ playwright, baseURL }) => {
+  const { users } = await createTestTenant({ users: [{ role: "OWNER" }] });
+  const client = await playwright.request.newContext({ baseURL: baseURL! });
+  const data = { email: users[0].email, password: users[0].password };
+  for (const origin of ["https://evil.example", "null"]) {
+    const res = await client.post("/api/auth/login", { headers: { origin }, data });
+    expect(res.status(), origin).toBe(403);
+    expect((await res.json()).error).toBe("forbidden_origin");
+    expect(res.headers()["set-cookie"]).toBeUndefined();
+  }
+  expect((await client.post("/api/auth/login", { headers: { origin: baseURL! }, data })).status()).toBe(200);
+  expect((await client.post("/api/auth/login", { data })).status()).toBe(200);
+  await client.dispose();
+});
+
+test("login with a body over 8 KB answers 400 invalid_request", async ({ request }) => {
+  const res = await request.post("/api/auth/login", { data: { email: "nobody-edge@example.com", password: "x".repeat(20_000) } });
+  expect(res.status()).toBe(400);
+  expect((await res.json()).issues[0].message).toBe("Richiesta troppo grande");
 });
 
 test("the logout response clears the cookie with the same attributes and the link navigation from /api works", async ({ playwright, baseURL }) => {

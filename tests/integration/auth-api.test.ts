@@ -50,6 +50,89 @@ const withCookie = (path: string, token: string | undefined, init: RequestInit =
   new Request(`${BASE}${path}`, { ...init, headers: { ...(token === undefined ? {} : { cookie: `vistato_session=${token}` }), ...(init.headers as object) } });
 const tokenOf = (res: Response) => /vistato_session=([^;]*)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
 
+describe("POST /api/auth/login CSRF, media type, size and re-login", () => {
+  const creds = { email: "mario@acme.it", password: PASSWORD };
+
+  it("answers 415 unsupported_media_type, with no session, for a non-JSON Content-Type or none", async () => {
+    for (const type of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data"]) {
+      const res = await login(post("/api/auth/login", creds, { "content-type": type }));
+      expect(res.status, type).toBe(415);
+      expect((await res.json()).error).toBe("unsupported_media_type");
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    const none = await login(new Request(`${BASE}/api/auth/login`, { method: "POST", body: JSON.stringify(creds) }));
+    expect(none.status).toBe(415);
+    expect((await login(post("/api/auth/login", creds, { "content-type": "Application/JSON; charset=utf-8" }))).status).toBe(200);
+  });
+
+  it("answers 403 forbidden_origin for a foreign Origin without a session; own Origin and no Origin are accepted", async () => {
+    for (const origin of ["https://evil.example", "null"]) {
+      const res = await login(post("/api/auth/login", creds, { origin }));
+      expect(res.status, origin).toBe(403);
+      expect((await res.json()).error).toBe("forbidden_origin");
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    expect((await login(post("/api/auth/login", creds, { origin: BASE }))).status).toBe(200);
+    expect((await doLogin()).status).toBe(200);
+  });
+
+  it("behind a proxy (APP_ORIGIN set, request.url internal) accepts the public Origin and refuses the others, on login and logout", async () => {
+    vi.stubEnv("APP_ORIGIN", "https://app.vistato.it");
+    try {
+      const internal = (path: string, headers: Record<string, string>) =>
+        new Request(`http://localhost:3000${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", host: "app.vistato.it", ...headers },
+          body: JSON.stringify(creds),
+        });
+      const ok = await login(internal("/api/auth/login", { origin: "https://app.vistato.it" }));
+      expect(ok.status).toBe(200);
+      expect((await login(internal("/api/auth/login", { origin: "https://evil.example" }))).status).toBe(403);
+      expect((await login(internal("/api/auth/login", { origin: "http://localhost:3000" }))).status).toBe(403);
+      const token = tokenOf(ok);
+      const out = await logout(withCookie("/api/auth/logout", token, { method: "POST", headers: { origin: "https://app.vistato.it" } }));
+      expect(out.status).toBe(204);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a body over 8 KB, declared or streamed without Content-Length, and accepts one just under", async () => {
+    const big = JSON.stringify({ ...creds, password: "x".repeat(9000) });
+    const declared = await login(post("/api/auth/login", big));
+    expect(declared.status).toBe(400);
+    expect((await declared.json()).issues[0].message).toBe("Richiesta troppo grande");
+
+    const bytes = new TextEncoder().encode(JSON.stringify({ ...creds, password: "x".repeat(200_000) }));
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= bytes.length) return controller.close();
+        controller.enqueue(bytes.slice(pulled, pulled + 1024));
+        pulled += 1024;
+      },
+    });
+    const streamed = await login(
+      new Request(`${BASE}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit),
+    );
+    expect(streamed.status).toBe(400);
+    expect((await streamed.json()).issues[0].message).toBe("Richiesta troppo grande");
+    expect(pulled).toBeLessThan(bytes.length);
+
+    expect((await doLogin({ ...creds, password: "x".repeat(1024) })).status).toBe(401);
+  });
+
+  it("ends the session of the previous cookie at re-login and ignores an invalid previous cookie", async () => {
+    const first = tokenOf(await doLogin());
+    const second = await login(withCookie("/api/auth/login", first, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(creds) }));
+    expect(second.status).toBe(200);
+    expect((await getMe(withCookie("/api/me", first))).status).toBe(401);
+    expect((await getMe(withCookie("/api/me", tokenOf(second)))).status).toBe(200);
+    const bad = await login(withCookie("/api/auth/login", "invented", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(creds) }));
+    expect(bad.status).toBe(200);
+  });
+});
+
 describe("POST /api/auth/login", () => {
   it("answers 200 with the user resource and a 7-day httpOnly SameSite=Lax cookie", async () => {
     vi.stubEnv("SESSION_COOKIE_SECURE", ""); // anything but "false": Secure stays on

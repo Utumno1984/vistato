@@ -29,6 +29,7 @@ jobs:
       TEST_DATABASE_URL: postgres://vistato:vistato@localhost:5432/vistato_test
       DEMO_USER_PASSWORD: ci-demo-password-not-a-secret
       SESSION_COOKIE_SECURE: "false"
+      APP_ORIGIN: http://localhost:3100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
