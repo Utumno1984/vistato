@@ -44,7 +44,7 @@ export async function resetDb(): Promise<void> {
   assertTestDatabase(requireTestDatabaseUrl());
   const sql = testSql();
   await assertConnectedToTestDatabase(sql);
-  await sql`TRUNCATE sessions, tenant_modules, users, tenants CASCADE`;
+  await sql`TRUNCATE invoices, sessions, tenant_modules, users, tenants CASCADE`;
 }
 
 export async function closeTestDb(): Promise<void> {

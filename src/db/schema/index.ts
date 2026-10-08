@@ -8,3 +8,4 @@ export * from "./users";
 export * from "./sessions";
 export * from "./modules";
 export * from "./tenant-modules";
+export * from "./invoices";

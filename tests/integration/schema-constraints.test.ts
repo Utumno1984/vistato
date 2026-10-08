@@ -92,7 +92,7 @@ describe("generated columns", () => {
     const rows = await testSql()`
       select table_name, column_name, data_type from information_schema.columns
       where table_schema = 'public' and column_name in ('created_at', 'updated_at')`;
-    expect(rows).toHaveLength(10); // 5 tables: tenants, users, modules, tenant_modules, sessions
+    expect(rows).toHaveLength(12); // 6 tables: tenants, users, modules, tenant_modules, sessions, invoices
     for (const row of rows) expect(row.data_type).toBe("timestamp with time zone");
   });
 
@@ -232,6 +232,9 @@ describe("foreign keys", () => {
     // The only exception is sessions -> users, which is ON DELETE CASCADE ('c') on purpose:
     // deleting a user deletes its sessions.
     expect(rows).toEqual([
+      { conname: "invoices_decided_by_user_id_tenant_id_users_fk", table_name: "invoices", confdeltype: "r" },
+      { conname: "invoices_tenant_id_tenants_id_fk", table_name: "invoices", confdeltype: "r" },
+      { conname: "invoices_uploaded_by_user_id_tenant_id_users_fk", table_name: "invoices", confdeltype: "r" },
       { conname: "sessions_tenant_id_tenants_id_fk", table_name: "sessions", confdeltype: "r" },
       { conname: "sessions_user_id_tenant_id_users_fk", table_name: "sessions", confdeltype: "c" },
       { conname: "tenant_modules_module_id_modules_id_fk", table_name: "tenant_modules", confdeltype: "r" },
@@ -368,6 +371,165 @@ describe("tenant_modules", () => {
       testSql()`delete from modules where code = 'cost_centers'`,
       FOREIGN_KEY_VIOLATION,
       "tenant_modules_module_id_modules_id_fk",
+    );
+  });
+});
+
+async function insertInvoice(tenantId: string | null, uploaderId: string | null, values: Values = {}): Promise<Row> {
+  const row = {
+    tenant_id: tenantId,
+    document_type: "TD01",
+    supplier_name: "Forniture Rossi",
+    supplier_vat_country: "IT",
+    supplier_vat_code: "01234567890",
+    invoice_number: "1",
+    invoice_date: "2026-03-15",
+    total_amount_cents: "12000",
+    currency: "EUR",
+    uploaded_by_user_id: uploaderId,
+    ...values,
+  };
+  const [invoice] = await testSql()`insert into invoices ${testSql()(row)} returning *`;
+  return invoice;
+}
+
+describe("invoices", () => {
+  it("default to PENDING with empty decision fields and generated columns", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    const invoice = await insertInvoice(tenant.id, user.id);
+    expectGeneratedColumns(invoice);
+    expect(invoice.status).toBe("PENDING");
+    expect(invoice.decided_at).toBeNull();
+    expect(invoice.decided_by_user_id).toBeNull();
+    expect(invoice.rejection_reason).toBeNull();
+  });
+
+  it("reject a PENDING invoice with decided_at or decided_by_user_id", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    await expectPgError(
+      insertInvoice(tenant.id, user.id, { decided_at: "2026-04-01T00:00:00Z" }),
+      CHECK_VIOLATION,
+      "invoices_pending_not_decided",
+    );
+    await expectPgError(
+      insertInvoice(tenant.id, user.id, { decided_by_user_id: user.id }),
+      CHECK_VIOLATION,
+      "invoices_pending_not_decided",
+    );
+  });
+
+  it("reject APPROVED or REJECTED without decided_at and decided_by_user_id", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    for (const status of ["APPROVED", "REJECTED"]) {
+      await expectPgError(insertInvoice(tenant.id, user.id, { status }), CHECK_VIOLATION, "invoices_decided_has_decision");
+      await expectPgError(
+        insertInvoice(tenant.id, user.id, { status, decided_at: "2026-04-01T00:00:00Z" }),
+        CHECK_VIOLATION,
+        "invoices_decided_has_decision",
+      );
+      await expectPgError(
+        insertInvoice(tenant.id, user.id, { status, decided_by_user_id: user.id }),
+        CHECK_VIOLATION,
+        "invoices_decided_has_decision",
+      );
+    }
+  });
+
+  it("accept a complete decision, with a rejection reason only when REJECTED", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    const decision = { decided_at: "2026-04-01T00:00:00Z", decided_by_user_id: user.id };
+    const approved = await insertInvoice(tenant.id, user.id, { invoice_number: "a", status: "APPROVED", ...decision });
+    expect(approved.status).toBe("APPROVED");
+    const rejected = await insertInvoice(tenant.id, user.id, {
+      invoice_number: "b",
+      status: "REJECTED",
+      rejection_reason: "Importo errato",
+      ...decision,
+    });
+    expect(rejected.rejection_reason).toBe("Importo errato");
+  });
+
+  it("reject a rejection_reason with a status other than REJECTED", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    const decision = { decided_at: "2026-04-01T00:00:00Z", decided_by_user_id: user.id };
+    await expectPgError(
+      insertInvoice(tenant.id, user.id, { rejection_reason: "x" }),
+      CHECK_VIOLATION,
+      "invoices_rejection_reason_only_if_rejected",
+    );
+    await expectPgError(
+      insertInvoice(tenant.id, user.id, { status: "APPROVED", rejection_reason: "x", ...decision }),
+      CHECK_VIOLATION,
+      "invoices_rejection_reason_only_if_rejected",
+    );
+  });
+
+  it("reject malformed fixed-format and blank fields", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    const cases: [string, string, string][] = [
+      ["document_type", "TD1", "invoices_document_type_format"],
+      ["supplier_name", "   ", "invoices_supplier_name_not_blank"],
+      ["supplier_vat_country", "it", "invoices_supplier_vat_country_format"],
+      ["supplier_vat_code", "", "invoices_supplier_vat_code_format"],
+      ["supplier_vat_code", "A".repeat(29), "invoices_supplier_vat_code_format"],
+      ["invoice_number", "  ", "invoices_invoice_number_not_blank"],
+      ["currency", "eur", "invoices_currency_format"],
+    ];
+    for (const [column, value, constraint] of cases) {
+      await expectPgError(insertInvoice(tenant.id, user.id, { [column]: value }), CHECK_VIOLATION, constraint);
+    }
+  });
+
+  it("accept zero and negative amounts, and reject a duplicate supplier, number and date in a tenant", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    const zero = await insertInvoice(tenant.id, user.id, { invoice_number: "z", total_amount_cents: "0" });
+    expect(zero.total_amount_cents).toBe("0");
+    const negative = await insertInvoice(tenant.id, user.id, { invoice_number: "n", total_amount_cents: "-500" });
+    expect(negative.total_amount_cents).toBe("-500");
+    await expectPgError(
+      insertInvoice(tenant.id, user.id, { invoice_number: "n" }),
+      UNIQUE_VIOLATION,
+      "invoices_tenant_supplier_number_date_unique",
+    );
+  });
+
+  it("reject an uploader or decider from another tenant (composite foreign keys)", async () => {
+    const tenantA = await insertTenant();
+    const tenantB = await insertTenant({ vat_number: "98765432109" });
+    const userA = await insertUser(tenantA.id);
+    const userB = await insertUser(tenantB.id, { email: "b@beta.it" });
+    await expectPgError(
+      insertInvoice(tenantA.id, userB.id),
+      FOREIGN_KEY_VIOLATION,
+      "invoices_uploaded_by_user_id_tenant_id_users_fk",
+    );
+    await expectPgError(
+      insertInvoice(tenantA.id, userA.id, {
+        status: "APPROVED",
+        decided_at: "2026-04-01T00:00:00Z",
+        decided_by_user_id: userB.id,
+      }),
+      FOREIGN_KEY_VIOLATION,
+      "invoices_decided_by_user_id_tenant_id_users_fk",
+    );
+  });
+
+  it("require an existing tenant and prevent deleting the uploader", async () => {
+    const tenant = await insertTenant();
+    const user = await insertUser(tenant.id);
+    await expectPgError(insertInvoice("00000000-0000-4000-8000-000000000000", user.id), FOREIGN_KEY_VIOLATION);
+    await insertInvoice(tenant.id, user.id);
+    await expectPgError(
+      testSql()`delete from users where id = ${user.id}`,
+      FOREIGN_KEY_VIOLATION,
+      "invoices_uploaded_by_user_id_tenant_id_users_fk",
     );
   });
 });
