@@ -10,11 +10,12 @@ import { parseSessionToken } from "@/lib/auth/session-token";
 export function proxy(request: NextRequest) {
   if (parseSessionToken(request.headers.get("cookie"))) return NextResponse.next();
   const { pathname, search } = request.nextUrl;
-  // Relative Location: correct also behind a reverse proxy, where request.url is the internal address.
-  return new NextResponse(null, {
-    status: 307,
-    headers: { Location: `/login?next=${encodeURIComponent(pathname + search)}`, "Cache-Control": "no-store" },
-  });
+  // Next requires an absolute URL here; it is built on the origin the request came in on.
+  const login = new URL("/login", request.nextUrl);
+  login.searchParams.set("next", pathname + search);
+  const response = NextResponse.redirect(login);
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }
 
 export const config = { matcher: ["/fatture", "/fatture/:path*"] };
