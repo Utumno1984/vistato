@@ -20,7 +20,7 @@ consegni una pull request in bozza.
 3. Crea il branch dal `main` aggiornato: `git switch main && git pull && git switch -c feat/<N>-<slug>`
    (oppure `fix/<N>-<slug>` per i bug).
 4. Implementa il minimo necessario per soddisfare i criteri di accettazione, seguendo le
-   convenzioni del codice esistente. Se serve una migrazione: modifica `src/db/schema.ts`,
+   convenzioni del codice esistente. Se serve una migrazione: modifica la cartella `src/db/schema/`,
    poi `npm run db:generate`, e rileggi lo SQL generato in `drizzle/`.
 5. Al primo commit pusha il branch e apri subito la PR in bozza, così la CI gira a ogni push:
    `gh pr create --draft --title "..." --body "Closes #<N>\n\n<cosa cambia e come è testato>"`.
@@ -41,5 +41,9 @@ commit quando ha senso, aggiungi un test che riproduce ogni bug prima di corregg
 
 - Non lavorare mai su `main`, non fare merge, non usare `--force` o `--no-verify`.
 - Non indebolire o cancellare un test per farlo passare: se un test è sbagliato, spiegalo.
+  Indebolire significa anche `.skip`, `.only`, `.fixme`, asserzioni rimosse, soglie o timeout
+  allargati.
+- Per le funzionalità nuove aggiorna `docs/regression-matrix.md`.
+- Non applicare mai l'etichetta `rimozione-funzionalita`: la applicano solo Daniele o l'orchestratore.
 - Niente segreti nel codice o nei commit: le configurazioni passano da variabili d'ambiente.
 - Restituisci alla sessione principale: numero della PR, branch, esito di `npm run check`.

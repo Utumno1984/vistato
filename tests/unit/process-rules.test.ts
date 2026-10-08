@@ -5,8 +5,6 @@ import { describe, expect, it } from "vitest";
 const root = join(__dirname, "..", "..");
 
 /** Literal key phrases that must stay in each process file (docs/ is never read). */
-// TODO(#15): the checks for the four agent files in .claude/agents/ (pianificatore,
-// sviluppatore, tester, critico-avversariale) must be added together with their edits.
 const rules: Record<string, string[]> = {
   "CLAUDE.md": [
     "## Regressione e test",
@@ -17,6 +15,30 @@ const rules: Record<string, string[]> = {
     "`rimozione-funzionalita`",
     "Gli agenti non la applicano mai",
     "`src/db/schema/`",
+  ],
+  ".claude/agents/pianificatore.md": [
+    "## Test e2e",
+    "Nessun ticket senza la sezione",
+    "`src/db/schema/`",
+  ],
+  ".claude/agents/sviluppatore.md": [
+    "`.skip`, `.only`, `.fixme`",
+    "docs/regression-matrix.md",
+    "Non applicare mai l'etichetta `rimozione-funzionalita`",
+    "`src/db/schema/`",
+  ],
+  ".claude/agents/tester.md": [
+    "npm run test:guard -- --base-ref origin/main",
+    "docs/regression-matrix.md",
+    "numero di test e2e eseguiti/passati/falliti",
+    "senza fingere un esito locale",
+  ],
+  ".claude/agents/critico-avversariale.md": [
+    "gravità ALTO",
+    "git diff origin/main -- tests e2e",
+    "`rimozione-funzionalita` non",
+    "aggirabile dall'interno",
+    "Le regole di regressione valgono anche qui",
   ],
   ".github/ISSUE_TEMPLATE/ticket.md": ["## Test e2e"],
   ".github/pull_request_template.md": [

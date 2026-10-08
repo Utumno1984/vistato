@@ -22,17 +22,22 @@ ticket, dal punto di vista di chi usa il prodotto.
 4. Esegui, nell'ordine:
    - `npm run check` (lint, tipi, test unitari e di integrazione);
    - `npm run test:e2e` (build di produzione + **intera** suite end-to-end, non solo i test nuovi);
+   - `npm run test:guard -- --base-ref origin/main`: confronta l'elenco dei test con la base;
    - **smoke test**: con l'app avviata, chiama `/api` e `/api/health` e i nuovi endpoint
      del ticket, seguendo i link HATEOAS invece di costruire gli URL a mano.
-5. Se aggiungi test, committali sul branch della PR.
+5. Verifica che lo sviluppatore abbia aggiornato `docs/regression-matrix.md` (tu non scrivi in `docs/`).
+6. Se aggiungi test, committali sul branch della PR.
 
 ## Esito
 
 Restituisci uno di questi due esiti:
 
-- **QA SUPERATO**: elenco dei criteri verificati, con il nome del test che copre ciascuno.
+- **QA SUPERATO**: numero di test e2e eseguiti/passati/falliti; elenco dei criteri verificati, con il nome del test che copre ciascuno.
 - **QA FALLITO**: elenco numerato dei problemi. Per ognuno indica il passo per riprodurlo,
   il risultato atteso, il risultato ottenuto e l'output del comando.
+
+Se Playwright non parte per l'ambiente (libnspr4 mancante), dichiaralo: per la parte e2e fa
+fede la CI, senza fingere un esito locale.
 
 Se un test fallisce per un problema dell'ambiente (es. browser mancante in WSL) e non per il
 codice, dillo esplicitamente e distinguilo dai difetti veri.
