@@ -1,0 +1,32 @@
+[
+  {
+    "name": "emailSchema > accepts %s unchanged",
+    "file": "/repo/tests/unit/email.test.ts",
+    "projectName": "unit",
+    "location": { "line": 13, "column": 112 }
+  },
+  {
+    "name": "emailSchema > trims white space and invisible characters at both ends, keeping the case",
+    "file": "/repo/tests/unit/email.test.ts",
+    "projectName": "unit",
+    "location": { "line": 20, "column": 3 }
+  },
+  {
+    "name": "emailSchema > rejects the malformed address %j",
+    "file": "/repo/tests/unit/email.test.ts",
+    "projectName": "unit",
+    "location": { "line": 42, "column": 5 }
+  },
+  {
+    "name": "emailSchema > accepts ${EMAIL_MAX_LENGTH} characters and rejects one more",
+    "file": "/repo/tests/unit/email.test.ts",
+    "projectName": "unit",
+    "location": { "line": 63, "column": 3 }
+  },
+  {
+    "name": "pingDatabase > returns true when the database answers",
+    "file": "/repo/tests/integration/db-health.test.ts",
+    "projectName": "integration",
+    "location": { "line": 30, "column": 3 }
+  }
+]
