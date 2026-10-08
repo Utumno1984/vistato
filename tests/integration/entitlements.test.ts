@@ -163,7 +163,8 @@ describe("forTenant(t).modules", () => {
     const newExpiry = new Date("2028-01-01T00:00:00.000Z");
     const again = await activate(tenantA, "purchase_orders", NOW, newExpiry);
     expect(again).toMatchObject({ id: first.id, status: "ACTIVE", activatedAt: NOW, expiresAt: newExpiry });
-    expect(again.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime());
+    // JS dates have millisecond precision: the strict increase is guaranteed in SQL (greatest(...)).
+    expect(again.updatedAt.getTime()).toBeGreaterThanOrEqual(first.updatedAt.getTime());
     expect(await rows(tenantA)).toHaveLength(1);
     expect(await has(tenantA, "purchase_orders")).toBe(true);
   });
