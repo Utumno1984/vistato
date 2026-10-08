@@ -16,6 +16,9 @@ import { tenants, tenantStatus, type Tenant } from "@/db/schema";
 import { taxCodeSchema, vatNumberSchema } from "@/lib/validation/italian-tax-ids";
 import { requiredTextSchema } from "@/lib/validation/text";
 
+// Application code cannot import `@/db/schema` (ESLint): the type comes from here.
+export type { Tenant };
+
 const VAT_NUMBER_UNIQUE_CONSTRAINT = "tenants_vat_number_unique";
 
 /**

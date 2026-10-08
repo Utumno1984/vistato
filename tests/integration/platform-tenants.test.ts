@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 
+import { closeDb } from "@/db/client";
 import { DuplicateVatNumberError, TenantNotFoundError, ValidationError } from "@/db/errors";
 import { createTenant, setTenantStatus, type CreateTenantInput } from "@/db/platform/tenants";
 import { tenants } from "@/db/schema";
@@ -397,9 +398,4 @@ describe("setTenantStatus", () => {
 });
 
 // Close the application pool opened by the calls that rely on the default database.
-afterAll(async () => {
-  const globalForDb = globalThis as unknown as { sql?: { end: () => Promise<void> }; db?: unknown };
-  await globalForDb.sql?.end();
-  delete globalForDb.sql;
-  delete globalForDb.db;
-});
+afterAll(closeDb);

@@ -44,16 +44,35 @@ export class TenantNotFoundError extends Error {
   }
 }
 
+/** The tenant already has a user with this email (compared case-insensitively). */
+export class DuplicateEmailError extends Error {
+  constructor(readonly email: string) {
+    super("A user with this email already exists in the tenant");
+    this.name = "DuplicateEmailError";
+  }
+}
+
 const UNIQUE_VIOLATION = "23505";
+const FOREIGN_KEY_VIOLATION = "23503";
 
 /**
  * True when `error` (or any error in its `cause` chain: Drizzle wraps driver
- * errors) is a Postgres unique violation on the given constraint.
+ * errors) is a Postgres error with the given SQLSTATE on the given constraint.
  */
-export function isUniqueViolation(error: unknown, constraint: string): boolean {
+function isConstraintViolation(error: unknown, code: string, constraint: string): boolean {
   for (let e: unknown = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
     const pg = e as { code?: unknown; constraint_name?: unknown };
-    if (pg.code === UNIQUE_VIOLATION && pg.constraint_name === constraint) return true;
+    if (pg.code === code && pg.constraint_name === constraint) return true;
   }
   return false;
+}
+
+/** True when `error` is a Postgres unique violation on the given constraint or unique index. */
+export function isUniqueViolation(error: unknown, constraint: string): boolean {
+  return isConstraintViolation(error, UNIQUE_VIOLATION, constraint);
+}
+
+/** True when `error` is a Postgres foreign key violation on the given constraint. */
+export function isForeignKeyViolation(error: unknown, constraint: string): boolean {
+  return isConstraintViolation(error, FOREIGN_KEY_VIOLATION, constraint);
 }
