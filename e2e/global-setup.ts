@@ -1,14 +1,14 @@
+import { execFileSync } from "node:child_process";
+
 import "dotenv/config";
 
-import { seedDatabase } from "../src/db/migrate";
-
 /**
- * Runs once before the Playwright suite: module catalogue and demo tenant/user on the
- * database at DATABASE_URL (integration tests empty the shared database before the e2e run).
+ * Runs once before the Playwright suite: `npm run db:seed` (module catalogue and demo
+ * tenant/user) on the database at DATABASE_URL, since the integration tests empty the
+ * shared database before the e2e run. It runs as a separate process because Playwright
+ * loads TypeScript as CommonJS, which cannot load `src/db/migrate.ts` (`import.meta`).
  */
-export default async function globalSetup() {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) throw new Error("DATABASE_URL is not set (see .env.example)");
-  const { demoSeeded } = await seedDatabase(url, { demoPassword: process.env.DEMO_USER_PASSWORD });
-  if (!demoSeeded) console.warn("DEMO_USER_PASSWORD is not set: the demo user does not exist.");
+export default function globalSetup() {
+  if (!process.env.DATABASE_URL?.trim()) throw new Error("DATABASE_URL is not set (see .env.example)");
+  execFileSync("npm", ["run", "--silent", "db:seed"], { stdio: "inherit", env: process.env });
 }
