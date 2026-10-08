@@ -174,6 +174,28 @@ describe("validateExemption", () => {
     expect(result.problems.join()).toMatch(/30 characters/);
   });
 
+  it.each([
+    ["template sub-headings only", "### What is removed\n### Why\n### Replacement or migration path\n### Who was told"],
+    ["a repeated bulleted TODO", "- TODO\n- TODO\n- TODO\n- TODO\n- TODO\n- TODO\n- TODO\n- TODO"],
+    ["numbered and quoted placeholders", "1. TBD\n2. TBD\n> N/A\n> > ...\n+ xxx\n* ..."],
+    ["30 zero-width spaces", "​".repeat(30)],
+    ["zero-width spaces between placeholders", "TODO​\n-​ TODO​\n".repeat(10)],
+    ["30 punctuation marks and symbols", "!?.,;:!?.,;:!?.,;:!?.,;:!?.,;:!?.,;:"],
+    ["headings and list markers around too little text", "### Why\n- ok\n- fine"],
+  ])("rejects %s", (_, text) => {
+    const result = validateExemption({ labels: label, body: body(text) });
+    expect(result.valid).toBe(false);
+    expect(result.problems.join()).toMatch(/30 characters/);
+  });
+
+  it("accepts real text under sub-headings and list markers, counting only letters and digits", () => {
+    const text = "### Why\n- The export screen is replaced\n- by the new report 2.0 module";
+    expect(validateExemption({ labels: label, body: body(text) }).valid).toBe(true);
+    // 29 letters/digits spread over punctuation and a zero-width space: still too short.
+    const short = "- abcdefghij, klmnopqrst; uvwxy​zabc !!!!!!!!!!";
+    expect(validateExemption({ labels: label, body: body(short) }).valid).toBe(false);
+  });
+
   it("does not count comment text towards the 30 characters", () => {
     const text = `Short.\n<!-- ${"x".repeat(100)} -->`;
     expect(validateExemption({ labels: label, body: body(text) }).valid).toBe(false);
@@ -272,8 +294,27 @@ describe("check-test-removal CLI", () => {
     const head = write("lb-head.json", [a]);
     const bodyFile = write("lb-body.md", `## Rimozione funzionalità\n${justification}`);
     const labelsFile = write("labels.json", [{ name: "bug" }, { name: "rimozione-funzionalita" }]);
-    expect(run(["--base", base, "--head", head, "--labels", labelsFile, "--body-file", bodyFile]).code).toBe(0);
+    const ghFile = write("labels-gh.json", { labels: [{ name: "rimozione-funzionalita" }] });
+    expect(run(["--base", base, "--head", head, "--labels-file", labelsFile, "--body-file", bodyFile]).code).toBe(0);
+    expect(run(["--base", base, "--head", head, "--labels-file", ghFile, "--body-file", bodyFile]).code).toBe(0);
     expect(run(["--base", base, "--head", head, "--labels", "bug, rimozione-funzionalita", "--body-file", bodyFile]).code).toBe(0);
+  });
+
+  it("does not read --labels as a file name, even when such a file exists", () => {
+    const base = write("lbn-base.json", [a, b]);
+    const head = write("lbn-head.json", [a]);
+    const bodyFile = write("lbn-body.md", `## Rimozione funzionalità\n${justification}`);
+    const labelsFile = write("rimozione-funzionalita", [{ name: "rimozione-funzionalita" }]);
+    // The string equals an existing file name, but it is a label: the label list is just that name.
+    expect(run(["--base", base, "--head", head, "--labels", labelsFile, "--body-file", bodyFile]).code).toBe(1);
+    expect(run(["--base", base, "--head", head, "--labels", "x", "--labels-file", labelsFile]).code).toBe(2);
+  });
+
+  it("exits 2 for an unreadable --labels-file and for malformed labels JSON", () => {
+    const base = write("lbe-base.json", [a, b]);
+    const head = write("lbe-head.json", [a]);
+    expect(run(["--base", base, "--head", head, "--labels-file", join(dir, "nope.json")]).code).toBe(2);
+    expect(run(["--base", base, "--head", head, "--labels", '{"labels": oops']).code).toBe(2);
   });
 
   it("exits 1 saying the section is missing when only the label is present", () => {
@@ -352,6 +393,32 @@ describe("check-test-removal CLI", () => {
   });
 });
 
+describe("test-guard script", () => {
+  const run = (args: string[]) => {
+    const result = spawnSync(join(repo, "node_modules/.bin/tsx"), [join(repo, "scripts/test-guard.ts"), ...args], {
+      encoding: "utf8",
+      cwd: repo,
+    });
+    return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+  const worktrees = () =>
+    spawnSync("git", ["worktree", "list", "--porcelain"], { encoding: "utf8", cwd: repo }).stdout;
+
+  it("refuses a --base-ref that looks like an option", () => {
+    const result = run(["--base-ref=--detach"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/invalid --base-ref/);
+  });
+
+  it("exits 2 for an unknown ref and leaves no worktree behind", () => {
+    const before = worktrees();
+    const result = run(["--base-ref", "no-such-ref-for-the-guard"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toMatch(/unknown --base-ref/);
+    expect(worktrees()).toBe(before);
+  });
+});
+
 describe("list-tests CLI", () => {
   const run = (args: string[]) => {
     const result = spawnSync(join(repo, "node_modules/.bin/tsx"), [join(repo, "scripts/list-tests.ts"), ...args], {
@@ -376,6 +443,13 @@ describe("list-tests CLI", () => {
     expect(result.stdout).not.toContain('"location"');
     // The test list includes this very file: the guard guards itself.
     expect(tests.some((x) => x.file === "tests/unit/test-removal-guard.test.ts")).toBe(true);
+    // The static parser of Vitest invents tests from calls such as `testSql()(row)` or
+    // `tests.some((x) => ...)`; the real collection must not contain them.
+    const names = tests.filter((x) => x.runner === "vitest").map((x) => x.name);
+    expect(names).not.toContain("row");
+    expect(names.filter((name) => name.includes("=>"))).toEqual([]);
+    // Parametrized names are expanded by the real collection.
+    expect(names).toContain("emailSchema > accepts mario@acme.it unchanged");
     const keys = tests.map((x) => [x.runner, x.project, x.file, x.name].join("\u0000"));
     expect(keys).toEqual([...keys].sort());
   }, 60_000);

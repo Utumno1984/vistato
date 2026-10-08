@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
   compareTestLists,
@@ -21,21 +21,26 @@ function describe(entry: TestEntry): string {
   return `[${entry.runner}${entry.project ? `/${entry.project}` : ""}] ${entry.file} :: ${JSON.stringify(entry.name)}`;
 }
 
-/** Accepts a JSON file, a JSON array, or a comma separated string. Items may be strings or {name}. */
+/**
+ * Accepts a JSON array, the object `{"labels": [...]}` printed by `gh pr view --json labels`, or
+ * a comma separated string. Items may be strings or `{name}` objects. The text is never taken for
+ * a file name: use `--labels-file` for that.
+ */
 export function parseLabels(value: string | undefined): string[] {
   if (value === undefined) return [];
-  let text = value;
-  if (existsSync(value)) text = readFileSync(value, "utf8");
-  const trimmed = text.trim();
+  const trimmed = value.trim();
   if (trimmed === "") return [];
-  if (trimmed.startsWith("[")) {
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     let data: unknown;
     try {
       data = JSON.parse(trimmed);
     } catch (error) {
       throw new ToolError(`--labels: malformed JSON (${(error as Error).message})`);
     }
-    if (!Array.isArray(data)) throw new ToolError("--labels: expected a JSON array");
+    if (!Array.isArray(data) && typeof data === "object" && data !== null && "labels" in data) {
+      data = (data as { labels: unknown }).labels;
+    }
+    if (!Array.isArray(data)) throw new ToolError("--labels: expected a JSON array or an object with a labels array");
     return data.map((item) => {
       if (typeof item === "string") return item;
       if (typeof item === "object" && item !== null && typeof (item as { name?: unknown }).name === "string") {
@@ -66,11 +71,12 @@ export function runCheckRemoval(argv: string[], out: Output = console): number {
         base: { type: "string" },
         head: { type: "string" },
         labels: { type: "string" },
+        "labels-file": { type: "string" },
         "body-file": { type: "string" },
       },
       strict: true,
     });
-    if (!values.base || !values.head) throw new ToolError("usage: --base <file> --head <file> [--labels <file|string>] [--body-file <path>]");
+    if (!values.base || !values.head) throw new ToolError("usage: --base <file> --head <file> [--labels <json|a,b> | --labels-file <path>] [--body-file <path>]");
 
     const base = parseTestListFile(readFileOrFail(values.base, "base list"), "base list");
     const head = parseTestListFile(readFileOrFail(values.head, "head list"), "head list");
@@ -91,7 +97,12 @@ export function runCheckRemoval(argv: string[], out: Output = console): number {
       }
     };
 
-    const labels = parseLabels(values.labels);
+    if (values.labels !== undefined && values["labels-file"] !== undefined) {
+      throw new ToolError("use either --labels or --labels-file, not both");
+    }
+    const labels = parseLabels(
+      values["labels-file"] !== undefined ? readFileOrFail(values["labels-file"], "labels") : values.labels,
+    );
     const body = values["body-file"] ? readFileOrFail(values["body-file"], "PR body") : null;
     const exemption = validateExemption({ labels, body });
 

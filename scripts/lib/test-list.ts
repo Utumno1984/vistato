@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** One test, identified by runner + project + file + full name. */
 export type TestEntry = {
@@ -139,8 +142,9 @@ function runList(command: string, args: string[], root: string): string {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
-    // No DATABASE_URL: listing must never need (or touch) a database.
-    env: { ...process.env, DATABASE_URL: "" },
+    // Defence in depth: test files are imported to collect them, so make sure that nothing
+    // they import can reach a database. (globalSetup is removed by the wrapper config.)
+    env: { ...process.env, DATABASE_URL: "", TEST_DATABASE_URL: "" },
   });
   if (result.error) {
     throw new ToolError(`${command} ${args.join(" ")} failed to start: ${result.error.message}`);
@@ -153,13 +157,57 @@ function runList(command: string, args: string[], root: string): string {
   return result.stdout;
 }
 
+const VITEST_CONFIG_NAMES = ["vitest.config", "vite.config"].flatMap((base) =>
+  [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"].map((ext) => base + ext),
+);
+
+/**
+ * Wrapper config that loads the repository's own config and drops every `globalSetup` (top level
+ * and per project): collecting tests must not run migrations or seeds. Everything else, in
+ * particular include/exclude, is kept as is.
+ */
+function wrapperConfigSource(baseConfigPath: string): string {
+  return `import loaded from ${JSON.stringify(pathToFileURL(baseConfigPath).href)};
+const strip = (config) => {
+  if (!config || typeof config !== "object") return config;
+  const copy = { ...config };
+  if (copy.test && typeof copy.test === "object") {
+    const { globalSetup, ...test } = copy.test;
+    copy.test = test;
+    if (Array.isArray(test.projects)) {
+      copy.test.projects = test.projects.map((project) =>
+        project && typeof project === "object" ? strip(project) : project,
+      );
+    }
+  }
+  return copy;
+};
+export default typeof loaded === "function"
+  ? async (...args) => strip(await loaded(...args))
+  : strip(loaded);
+`;
+}
+
+function listVitest(root: string): string {
+  const configName = VITEST_CONFIG_NAMES.find((name) => existsSync(join(root, name)));
+  // --staticParse=false really collects the tests: the static parser invents tests from calls
+  // like `foo()(row)` and misses generated ones.
+  const args = ["--no-install", "vitest", "list", "--json", "--staticParse=false"];
+  if (!configName) return runList("npx", args, root);
+  const tmp = mkdtempSync(join(tmpdir(), "list-tests-"));
+  try {
+    const wrapper = join(tmp, "vitest.list.config.mjs");
+    writeFileSync(wrapper, wrapperConfigSource(join(root, configName)));
+    return runList("npx", [...args, "--config", wrapper, "--root", root], root);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 /** Lists the tests of the repository in `root`, using that repository's own configuration. */
 export function listTests(root: string): TestEntry[] {
   const absoluteRoot = resolve(root);
-  const vitest = parseVitestList(
-    runList("npx", ["--no-install", "vitest", "list", "--json"], absoluteRoot),
-    absoluteRoot,
-  );
+  const vitest = parseVitestList(listVitest(absoluteRoot), absoluteRoot);
   const playwright = parsePlaywrightList(
     runList("npx", ["--no-install", "playwright", "test", "--list", "--reporter=json"], absoluteRoot),
     absoluteRoot,
@@ -227,6 +275,21 @@ export const MIN_JUSTIFICATION_LENGTH = 30;
 /** Lines that only hold template filler count as no text. */
 const PLACEHOLDER_LINE = /^(?:[-*_\s]*|\.{2,}|…+|tbd|todo|n\/?a|xxx+|descrivi.*|\[.*\]|<.*>)$/i;
 
+/** Removes list and quote markers (-, *, +, 1., 1), >), also nested, from the start of a line. */
+function stripListMarkers(line: string): string {
+  let current = line;
+  for (;;) {
+    const next = current.replace(/^(?:[-*+>]|\d+[.)])(?:\s+|$)/, "").trim();
+    if (next === current) return current;
+    current = next;
+  }
+}
+
+/** Number of letters and digits: punctuation, spaces and symbols are not real text. */
+export function countRealCharacters(text: string): number {
+  return (text.match(/[\p{L}\p{N}]/gu) ?? []).length;
+}
+
 function normalizeTitle(text: string): string {
   return text
     .normalize("NFD")
@@ -240,6 +303,8 @@ function normalizeTitle(text: string): string {
 export function extractRemovalJustification(body: string | null | undefined): string | null {
   if (typeof body !== "string") return null;
   const lines = body
+    // Invisible format characters (zero-width space, joiners, BOM...) are never real text.
+    .replace(/\p{Cf}/gu, "")
     .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
     .replace(/\r\n?/g, "\n")
     .split("\n");
@@ -262,6 +327,9 @@ export function extractRemovalJustification(body: string | null | undefined): st
   if (!found) return null;
   return content
     .map((line) => line.trim())
+    // Sub-headings of the template are structure, not justification.
+    .filter((line) => !/^#{1,6}(?:\s|$)/.test(line))
+    .map((line) => stripListMarkers(line))
     .filter((line) => !PLACEHOLDER_LINE.test(line))
     .join(" ")
     .replace(/\s+/g, " ")
@@ -280,9 +348,9 @@ export function validateExemption(input: { labels: string[]; body: string | null
   const text = extractRemovalJustification(input.body);
   if (text === null) {
     problems.push(`missing section "## ${REMOVAL_SECTION_TITLE}" in the PR description`);
-  } else if ([...text].length < MIN_JUSTIFICATION_LENGTH) {
+  } else if (countRealCharacters(text) < MIN_JUSTIFICATION_LENGTH) {
     problems.push(
-      `section "## ${REMOVAL_SECTION_TITLE}" needs at least ${MIN_JUSTIFICATION_LENGTH} characters of real text (comments and placeholders do not count)`,
+      `section "## ${REMOVAL_SECTION_TITLE}" needs at least ${MIN_JUSTIFICATION_LENGTH} characters (letters or digits) of real text (comments, headings, list markers and placeholders do not count)`,
     );
   }
   return { valid: problems.length === 0, problems };
