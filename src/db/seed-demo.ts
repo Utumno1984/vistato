@@ -14,7 +14,11 @@ import { tenants } from "./schema";
 import { forTenant } from "./tenant-scope";
 
 export const DEMO_TENANT_NAME = "Vistato Demo S.r.l.";
-/** Fixed demo VAT number (the tenant is found again by it): 0123456789 plus its check digit 7. */
+/**
+ * Fixed demo VAT number (the tenant is found again by it): 0123456789 plus its check digit 7.
+ * It cannot belong to a real company (not an assignable number), so no real tenant can
+ * collide with the demo one.
+ */
 export const DEMO_VAT_NUMBER = "01234567897";
 /** Reserved domain (RFC 2606): the demo user can never be a real mailbox. */
 export const DEMO_USER_EMAIL = "demo@example.com";
