@@ -5,5 +5,6 @@
 export * from "./enums";
 export * from "./tenants";
 export * from "./users";
+export * from "./sessions";
 export * from "./modules";
 export * from "./tenant-modules";

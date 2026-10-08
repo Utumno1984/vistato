@@ -92,7 +92,7 @@ describe("generated columns", () => {
     const rows = await testSql()`
       select table_name, column_name, data_type from information_schema.columns
       where table_schema = 'public' and column_name in ('created_at', 'updated_at')`;
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(10); // 5 tables: tenants, users, modules, tenant_modules, sessions
     for (const row of rows) expect(row.data_type).toBe("timestamp with time zone");
   });
 
@@ -229,7 +229,11 @@ describe("foreign keys", () => {
       from pg_constraint
       where contype = 'f' and connamespace = 'public'::regnamespace
       order by conname`;
+    // The only exception is sessions -> users, which is ON DELETE CASCADE ('c') on purpose:
+    // deleting a user deletes its sessions.
     expect(rows).toEqual([
+      { conname: "sessions_tenant_id_tenants_id_fk", table_name: "sessions", confdeltype: "r" },
+      { conname: "sessions_user_id_tenant_id_users_fk", table_name: "sessions", confdeltype: "c" },
       { conname: "tenant_modules_module_id_modules_id_fk", table_name: "tenant_modules", confdeltype: "r" },
       { conname: "tenant_modules_tenant_id_tenants_id_fk", table_name: "tenant_modules", confdeltype: "r" },
       { conname: "users_tenant_id_tenants_id_fk", table_name: "users", confdeltype: "r" },

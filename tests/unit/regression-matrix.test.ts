@@ -57,6 +57,7 @@ function requiredSources(): string[] {
   return [
     ...listFiles(join(ROOT, "src/app"), (p) => /(^|\/)(route\.ts|page\.tsx)$/.test(p)),
     ...direct("src/db/platform"),
+    ...direct("src/db/auth"),
     ...direct("src/db/tenant-scope"),
     ...(existsSync(join(ROOT, "src/db/entitlements.ts")) ? ["src/db/entitlements.ts"] : []),
     ...listFiles(join(ROOT, "src/lib"), (p) => p.endsWith(".ts")),

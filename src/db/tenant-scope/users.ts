@@ -1,15 +1,18 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client";
 import {
   DuplicateEmailError,
+  DuplicateLoginEmailError,
   isForeignKeyViolation,
   isUniqueViolation,
   TenantNotFoundError,
   ValidationError,
 } from "@/db/errors";
-import { users, userRole, userStatus, type User } from "@/db/schema";
+import { deleteUserSessions } from "@/db/auth/sessions";
+import { users, userRole, userStatus, type User as UserRow } from "@/db/schema";
+import { hashPassword, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/lib/auth/password";
 import { emailSchema } from "@/lib/validation/email";
 import { requiredTextSchema } from "@/lib/validation/text";
 
@@ -17,6 +20,12 @@ import type { TenantId } from "./tenant-id";
 
 const EMAIL_UNIQUE_INDEX = "users_tenant_id_lower_email_unique";
 const TENANT_FOREIGN_KEY = "users_tenant_id_tenants_id_fk";
+const LOGIN_EMAIL_UNIQUE_INDEX = "users_lower_email_with_password_unique";
+
+const passwordSchema = z
+  .string()
+  .min(PASSWORD_MIN_LENGTH, `La password deve avere almeno ${PASSWORD_MIN_LENGTH} caratteri`)
+  .max(PASSWORD_MAX_LENGTH, `La password può avere al massimo ${PASSWORD_MAX_LENGTH} caratteri`);
 
 /**
  * Technical anti-abuse cap on raw first and last names (before trimming), not a
@@ -60,7 +69,10 @@ export const updateUserInputSchema = createUserInputSchema
     message: "Nessun campo da modificare",
   });
 
-export type { User };
+/** A user as exposed by the data layer: the password hash never leaves the database layer. */
+export type User = Omit<UserRow, "passwordHash">;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- omitted on purpose
+const { passwordHash: _passwordHash, ...userColumns } = getTableColumns(users);
 export type UserRole = z.infer<typeof userFields.role>;
 export type UserStatus = z.infer<typeof userFields.status>;
 export type CreateUserInput = z.input<typeof createUserInputSchema>;
@@ -77,6 +89,9 @@ function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
 
 function rethrowAsDomainError(error: unknown, email: string | undefined, tenantId: TenantId): never {
   if (email !== undefined && isUniqueViolation(error, EMAIL_UNIQUE_INDEX)) throw new DuplicateEmailError(email);
+  if (email !== undefined && isUniqueViolation(error, LOGIN_EMAIL_UNIQUE_INDEX)) {
+    throw new DuplicateLoginEmailError(email);
+  }
   if (isForeignKeyViolation(error, TENANT_FOREIGN_KEY)) throw new TenantNotFoundError(tenantId);
   throw error;
 }
@@ -107,6 +122,15 @@ export interface TenantUsers {
    * @returns false when the tenant has no user with this ID.
    */
   delete(id: string): Promise<boolean>;
+  /**
+   * Sets the login password of a user of the tenant (stored as an argon2id hash) in a
+   * single `UPDATE ... WHERE id AND tenant_id`.
+   * @returns false when the tenant has no user with this ID (also a non-UUID); true otherwise.
+   * @throws ValidationError when the password is shorter than 12 or longer than 1024
+   *   characters (nothing changes).
+   * @throws DuplicateLoginEmailError when another user already logs in with this email.
+   */
+  setPassword(id: string, password: string): Promise<boolean>;
 }
 
 export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
@@ -115,7 +139,7 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
   return {
     async list() {
       return db
-        .select()
+        .select(userColumns)
         .from(users)
         .where(eq(users.tenantId, tenantId))
         .orderBy(asc(users.createdAt), asc(users.id));
@@ -123,7 +147,7 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
 
     async findById(id) {
       if (!userIdSchema.safeParse(id).success) return null;
-      const [user] = await db.select().from(users).where(inTenant(id)).limit(1);
+      const [user] = await db.select(userColumns).from(users).where(inTenant(id)).limit(1);
       return user ?? null;
     },
 
@@ -133,7 +157,7 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
         const [user] = await db
           .insert(users)
           .values({ email, firstName, lastName, role, status: status ?? "INVITED", tenantId })
-          .returning();
+          .returning(userColumns);
         return user;
       } catch (error) {
         rethrowAsDomainError(error, email, tenantId);
@@ -144,20 +168,24 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
       const { email, firstName, lastName, role, status } = parse(updateUserInputSchema, patch);
       if (!userIdSchema.safeParse(id).success) return null;
       try {
-        const [user] = await db
-          .update(users)
-          // Only the known fields, listed one by one: `tenant_id` and `id` are never written.
-          .set({
-            email,
-            firstName,
-            lastName,
-            role,
-            status,
-            updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
-          })
-          .where(inTenant(id))
-          .returning();
-        return user ?? null;
+        return await db.transaction(async (tx) => {
+          const [user] = await tx
+            .update(users)
+            // Only the known fields, listed one by one: `tenant_id` and `id` are never written.
+            .set({
+              email,
+              firstName,
+              lastName,
+              role,
+              status,
+              updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
+            })
+            .where(inTenant(id))
+            .returning(userColumns);
+          // A user leaving ACTIVE loses its sessions for good: reactivating must not revive them.
+          if (user && status !== undefined && status !== "ACTIVE") await deleteUserSessions(id, tenantId, tx);
+          return user ?? null;
+        });
       } catch (error) {
         rethrowAsDomainError(error, email, tenantId);
       }
@@ -167,6 +195,34 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
       if (!userIdSchema.safeParse(id).success) return false;
       const deleted = await db.delete(users).where(inTenant(id)).returning({ id: users.id });
       return deleted.length > 0;
+    },
+
+    async setPassword(id, password) {
+      const valid = parse(passwordSchema, password);
+      if (!userIdSchema.safeParse(id).success) return false;
+      const passwordHash = await hashPassword(valid);
+      // Read before the UPDATE: after a failed statement a transaction cannot run queries.
+      const [current] = await db.select({ email: users.email }).from(users).where(inTenant(id)).limit(1);
+      if (!current) return false;
+      try {
+        return await db.transaction(async (tx) => {
+          const updated = await tx
+            .update(users)
+            .set({
+              passwordHash,
+              updatedAt: sql`greatest(now(), ${users.updatedAt} + interval '1 microsecond')`,
+            })
+            .where(inTenant(id))
+            .returning({ id: users.id });
+          if (updated.length === 0) return false;
+          // A new password invalidates every session opened with the old one.
+          await deleteUserSessions(id, tenantId, tx);
+          return true;
+        });
+      } catch (error) {
+        if (isUniqueViolation(error, LOGIN_EMAIL_UNIQUE_INDEX)) throw new DuplicateLoginEmailError(current.email);
+        throw error;
+      }
     },
   };
 }
