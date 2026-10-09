@@ -8,8 +8,9 @@ const SYMBOLS: Readonly<Record<string, string>> = { EUR: "€" };
 export function formatAmount(cents: number, currency: string): string {
   if (!Number.isSafeInteger(cents)) throw new RangeError("Amount must be a safe integer number of cents");
   const value = BigInt(cents);
-  const absolute = value < 0n ? -value : value;
-  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  const fraction = (absolute % 100n).toString().padStart(2, "0");
+  const absolute = cents < 0 ? -value : value;
+  const hundred = BigInt(100);
+  const whole = (absolute / hundred).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const fraction = (absolute % hundred).toString().padStart(2, "0");
   return `${cents < 0 ? "-" : ""}${whole},${fraction} ${SYMBOLS[currency] ?? currency}`;
 }
