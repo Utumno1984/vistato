@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 /** Ends the session through the `logout` link of /api/me, then goes to the login page. */
 export function LogoutButton({ href, label }: { href: string; label: string }) {
   const busy = useRef(false);
@@ -28,13 +30,9 @@ export function LogoutButton({ href, label }: { href: string; label: string }) {
           Uscita non riuscita, riprova.
         </span>
       ) : null}
-      <button
-        type="button"
-        onClick={logout}
-        className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-      >
+      <Button type="button" variant="outline" onClick={logout}>
         {label}
-      </button>
+      </Button>
     </div>
   );
 }

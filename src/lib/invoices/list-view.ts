@@ -8,6 +8,20 @@ export const STATUS_LABELS: Readonly<Record<InvoiceStatus, string>> = {
   REJECTED: "Rifiutata",
 };
 
+export type StatusBadgeVariant = "secondary" | "success" | "destructive";
+
+/** Badge variant of a status; the text always comes from STATUS_LABELS (colour is never the only cue). */
+export function statusBadgeVariant(status: InvoiceStatus): StatusBadgeVariant {
+  switch (status) {
+    case "PENDING":
+      return "secondary";
+    case "APPROVED":
+      return "success";
+    case "REJECTED":
+      return "destructive";
+  }
+}
+
 export const STATUS_FILTERS: ReadonlyArray<{ status?: InvoiceStatus; label: string }> = [
   { label: "Tutte" },
   { status: "PENDING", label: "Da approvare" },

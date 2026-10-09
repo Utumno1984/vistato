@@ -3,12 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 import { decideInvoiceAction } from "./actions";
 
 const REASON_MAX_LENGTH = 1000;
 const FALLBACK_MESSAGE = "Operazione non riuscita, riprova.";
-const buttonClass =
-  "rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900";
 
 /**
  * Approve / reject buttons. The page shows the buttons (`canApprove`, `canReject`) only when the
@@ -59,22 +59,22 @@ export function DecisionPanel({
       {canApprove || canReject ? (
         <div className="flex flex-wrap gap-3">
           {canApprove ? (
-            <button type="button" disabled={pending} onClick={() => decide("APPROVED")} className={buttonClass}>
+            <Button type="button" variant="outline" disabled={pending} onClick={() => decide("APPROVED")}>
               Approva
-            </button>
+            </Button>
           ) : null}
           {canReject && !rejecting ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={pending}
               onClick={() => {
                 setError(null);
                 setRejecting(true);
               }}
-              className={buttonClass}
             >
               Rifiuta
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -99,21 +99,21 @@ export function DecisionPanel({
             className="rounded-md border border-zinc-300 p-2 text-sm dark:border-zinc-700 dark:bg-transparent"
           />
           <div className="flex gap-3">
-            <button type="submit" disabled={pending} className={buttonClass}>
+            <Button type="submit" variant="outline" disabled={pending}>
               Conferma rifiuto
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               disabled={pending}
               onClick={() => {
                 setRejecting(false);
                 setReason("");
                 setError(null);
               }}
-              className={buttonClass}
             >
               Annulla
-            </button>
+            </Button>
           </div>
         </form>
       ) : null}

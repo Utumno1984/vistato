@@ -13,7 +13,10 @@ import {
   parseListPageParams,
   STATUS_FILTERS,
   STATUS_LABELS,
+  statusBadgeVariant,
 } from "@/lib/invoices/list-view";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 import { UploadForm } from "./upload-form";
 
@@ -55,35 +58,37 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
       {invoices.length === 0 ? (
         <p className="mt-8 text-zinc-600 dark:text-zinc-400">Nessuna fattura</p>
       ) : (
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-zinc-300 dark:border-zinc-700">
-                <th className="py-2 pr-4 font-medium">Fornitore</th>
-                <th className="py-2 pr-4 font-medium">Numero</th>
-                <th className="py-2 pr-4 font-medium">Data</th>
-                <th className="py-2 pr-4 text-right font-medium">Importo</th>
-                <th className="py-2 font-medium">Stato</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="mt-6">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Fornitore</TableHead>
+                <TableHead>Numero</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead className="text-right">Importo</TableHead>
+                <TableHead>Stato</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {invoices.map((invoice) => (
-                <tr key={invoice.id} className="border-b border-zinc-200 dark:border-zinc-800">
-                  <td className="max-w-xs break-words py-2 pr-4">{invoice.supplier.name}</td>
-                  <td className="max-w-xs break-words py-2 pr-4">
+                <TableRow key={invoice.id}>
+                  <TableCell className="max-w-xs break-words whitespace-normal">{invoice.supplier.name}</TableCell>
+                  <TableCell className="max-w-xs break-words whitespace-normal">
                     <Link href={`/fatture/${invoice.id}`} className="underline">
                       {invoice.number}
                     </Link>
-                  </td>
-                  <td className="whitespace-nowrap py-2 pr-4">{formatDate(invoice.date)}</td>
-                  <td className="whitespace-nowrap py-2 pr-4 text-right">
+                  </TableCell>
+                  <TableCell>{formatDate(invoice.date)}</TableCell>
+                  <TableCell className="text-right">
                     {formatAmount(invoice.total.amountCents, invoice.total.currency)}
-                  </td>
-                  <td className="whitespace-nowrap py-2">{STATUS_LABELS[invoice.status]}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusBadgeVariant(invoice.status)}>{STATUS_LABELS[invoice.status]}</Badge>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
