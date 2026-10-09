@@ -144,3 +144,29 @@ test("GET /api links to the invoices collection only when authenticated", async 
   expect(res.status()).toBe(200);
   expect((await res.json())._links.self.href).toBe("/api/invoices?page=1&pageSize=20");
 });
+
+test("QA: stable order, pages do not overlap, next links are followed, extreme values do not break", async ({
+  playwright,
+  baseURL,
+}) => {
+  const tenant = await createTestTenant({ users: [{ role: "USER" }] });
+  const client = await loggedIn(playwright, baseURL!, tenant.users[0]);
+  await upload(client, 5);
+  const first = await (await client.get("/api/invoices?pageSize=2")).json();
+  const again = await (await client.get("/api/invoices?pageSize=2")).json();
+  expect(again).toEqual(first);
+  const ids: string[] = [];
+  let page = first;
+  for (;;) {
+    for (const inv of page._embedded.invoices) {
+      expect(inv._links.collection.href).toBe("/api/invoices");
+      ids.push(inv.id);
+    }
+    if (!page._links.next) break;
+    page = await (await client.get(page._links.next.href)).json();
+  }
+  expect(ids).toHaveLength(5);
+  expect(new Set(ids).size).toBe(5);
+  expect([200, 400]).toContain((await client.get("/api/invoices?page=99999999999999999999")).status());
+  expect((await client.get("/api/invoices?page=2147483648&pageSize=100")).status()).toBeLessThan(500);
+});
