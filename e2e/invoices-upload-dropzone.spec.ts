@@ -88,8 +88,16 @@ test("clicking the area opens the file chooser; the chosen name is shown and the
 
 async function openWithKey(page: Page, key: string) {
   await setup(page);
-  await page.getByLabel("File XML").focus();
-  await expect(page.getByLabel("File XML")).toBeFocused();
+  const input = page.getByLabel("File XML");
+  // Wait until React has hydrated the field: a re-render after focus must not steal it.
+  await expect
+    .poll(() =>
+      input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
+    )
+    .toBe(true);
+  await page.bringToFront();
+  await input.focus();
+  await expect(input).toBeFocused();
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     page.keyboard.press(key),
@@ -182,6 +190,17 @@ test("dropping a .pdf shows today's error message", async ({ page }) => {
   await expect(area(page)).toContainText("fattura.pdf");
   await page.getByRole("button", { name: "Carica" }).click();
   await expect(alertOf(page)).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(0);
+});
+
+test("dropping a file over 5 MB shows the size error and uploads nothing", async ({ page }) => {
+  await setup(page);
+  await dragEvent(page, area(page), "drop", [
+    { name: "grande.xml", type: "application/xml", content: "a".repeat(5 * 1024 * 1024 + 1) },
+  ]);
+  await expect(area(page)).toContainText("grande.xml");
+  await page.getByRole("button", { name: "Carica" }).click();
+  await expect(alertOf(page)).toContainText("Il file supera la dimensione massima di 5 MB");
   await expect(page.locator("tbody tr")).toHaveCount(0);
 });
 

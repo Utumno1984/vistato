@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type DragEvent, type FormEvent } from "react";
+import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
 
 import { firstDroppedFile } from "@/lib/invoices/dropped-file";
 import {
@@ -64,6 +64,14 @@ export function UploadForm() {
     transfer.items.add(file);
     input.files = transfer.files;
     syncName();
+  }
+
+  // Enter on a file input opens the chooser only through a native keypress default action,
+  // which Chromium occasionally drops; open it explicitly from the keydown (a user activation).
+  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || busy.current) return;
+    event.preventDefault();
+    event.currentTarget.click();
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -153,6 +161,7 @@ export function UploadForm() {
             aria-describedby="upload-file-name"
             accept=".xml,application/xml,text/xml"
             onChange={syncName}
+            onKeyDown={onInputKeyDown}
             className="sr-only"
           />
         </label>
