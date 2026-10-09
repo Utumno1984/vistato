@@ -52,7 +52,9 @@ function watchConsole(page: Page) {
 
 const approveButton = (page: Page) => page.getByRole("button", { name: "Approva", exact: true });
 const rejectButton = (page: Page) => page.getByRole("button", { name: "Rifiuta", exact: true });
-const status = (page: Page, label: string) => page.locator("dd", { hasText: new RegExp(`^${label}$`) });
+/** The page's own error message (the Next.js route announcer also has role=alert). */
+const alert = (page: Page) => page.locator("p[role=alert]");
+const status =(page: Page, label: string) => page.locator("dd", { hasText: new RegExp(`^${label}$`) });
 
 test("from the list to the detail: all fields are shown", async ({ page, playwright, baseURL }) => {
   const { user } = await setup();
@@ -126,7 +128,7 @@ test("a double click on Approva makes a single decision without errors", async (
   await page.goto(`/fatture/${id}`);
   await approveButton(page).dblclick();
   await expect(page.getByText(/^Approvata da E2E ADMIN il /)).toBeVisible();
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(alert(page)).toHaveCount(0);
   expect(problems).toEqual([]);
 });
 
@@ -201,7 +203,7 @@ test("a reason over 1000 characters (HTML limit bypassed) shows an error and the
   await textarea.evaluate((el) => el.removeAttribute("maxlength"));
   await textarea.fill("x".repeat(1001));
   await page.getByRole("button", { name: "Conferma rifiuto" }).click();
-  await expect(page.getByRole("alert")).toContainText("1000");
+  await expect(alert(page)).toContainText("1000");
   await expect(status(page, "Da approvare")).toBeVisible();
   await page.reload();
   await expect(status(page, "Da approvare")).toBeVisible();
@@ -222,7 +224,7 @@ test("an invoice decided by someone else after the page opened: conflict message
   const other = await apiClient(playwright, baseURL!, owner);
   expect((await other.post(`/api/invoices/${id}/reject`, { data: { reason: "no" } })).status()).toBe(200);
   await approveButton(page).click();
-  await expect(page.getByRole("alert")).toHaveText("La fattura è già stata approvata o rifiutata");
+  await expect(alert(page)).toHaveText("La fattura è già stata approvata o rifiutata");
   await expect(status(page, "Rifiutata")).toBeVisible();
   await expect(page.getByText(/^Rifiutata da E2E OWNER il /)).toBeVisible();
   await expect(approveButton(page)).toHaveCount(0);
@@ -241,7 +243,7 @@ test("a user demoted to USER with the page open gets a permission error; buttons
   await expect(approveButton(page)).toBeVisible();
   await forTenant(tenant.tenantId).users.update(admin.id, { role: "USER" });
   await approveButton(page).click();
-  await expect(page.getByRole("alert")).toContainText("permessi");
+  await expect(alert(page)).toContainText("permessi");
   await page.reload();
   await expect(status(page, "Da approvare")).toBeVisible();
   await expect(approveButton(page)).toHaveCount(0);
