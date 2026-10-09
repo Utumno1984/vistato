@@ -241,6 +241,38 @@ describe("POST /api/invoices", () => {
     expect(row.supplierVatCountry).toBe("FR");
   });
 
+  it("treats FR/ab123 and FR/AB123 (same number and date) as the same supplier: one row", async () => {
+    const lower = await sendForm(tokenA, xmlFile(buildFatturaPA({ vatCountry: "FR", vatCode: "ab123" })));
+    expect(lower.status).toBe(201);
+    const upper = await sendForm(tokenA, xmlFile(buildFatturaPA({ vatCountry: "FR", vatCode: "AB123" })));
+    expect(upper.status).toBe(409);
+    expect((await upper.json())._links.self.href).toBe(`/api/invoices/${(await lower.json()).id}`);
+    const mixed = await sendForm(tokenA, xmlFile(buildFatturaPA({ vatCountry: "fr", vatCode: "aB123" })));
+    expect(mixed.status).toBe(409);
+    expect(await count()).toBe(1);
+    const [row] = await testDb().select().from(invoices);
+    expect(row).toMatchObject({ supplierVatCountry: "FR", supplierVatCode: "AB123" });
+  });
+
+  it("refuses a Unicode look-alike country or code (ligature, dotless i) with 422", async () => {
+    expect((await sendForm(tokenA, xmlFile(buildFatturaPA({ vatCountry: "ﬀ", vatCode: "123" })))).status).toBe(422);
+    expect((await sendForm(tokenA, xmlFile(buildFatturaPA({ vatCountry: "ıt" })))).status).toBe(422);
+    expect(await count()).toBe(0);
+  });
+
+  it("rejects early on a declared Content-Length over the limit, without reading the body", async () => {
+    // The body is tiny and, if it were read, would be a 400 (broken multipart): only the header can give 413.
+    const res = await upload(
+      new Request(`${BASE}/api/invoices`, {
+        method: "POST",
+        headers: { cookie: `vistato_session=${tokenA}`, "content-type": "multipart/form-data; boundary=x", "content-length": "99999999" },
+        body: "tiny",
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(await count()).toBe(0);
+  });
+
   it("with two concurrent uploads of the same file creates one and answers 409 to the other", async () => {
     const statuses = (await Promise.all([sendForm(tokenA, xmlFile()), sendForm(tokenA, xmlFile())])).map((r) => r.status).sort();
     expect(statuses).toEqual([201, 409]);

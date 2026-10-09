@@ -137,9 +137,15 @@ export function parseFatturaPA(input: string | Uint8Array, options: ParseOptions
 }
 
 export interface ParseOptions {
-  /** Uppercase the supplier VAT country (`it` becomes `IT`) instead of refusing it. Default: false. */
-  normalizeVatCountry?: boolean;
+  /**
+   * Uppercase the supplier VAT country and VAT code (`fr`/`ab123` become `FR`/`AB123`) instead of
+   * refusing the lowercase country. Only ASCII letters are converted, so `ﬀ` or a dotless `ı` stay
+   * invalid. Default: false.
+   */
+  normalizeVatCase?: boolean;
 }
+
+const upperAscii = (value: string | undefined) => value?.replace(/[a-z]/g, (c) => c.toUpperCase());
 
 function parseUnsafe(input: string | Uint8Array, options: ParseOptions): FatturaPaResult {
   const decoded = decodeInput(input);
@@ -173,8 +179,9 @@ function parseUnsafe(input: string | Uint8Array, options: ParseOptions): Fattura
   const general = ["DatiGenerali", "DatiGeneraliDocumento"];
 
   const rawVatCountry = r.text(root, [...supplier, "IdFiscaleIVA", "IdPaese"], "supplierVatCountry");
-  const supplierVatCountry = options.normalizeVatCountry ? rawVatCountry?.toUpperCase() : rawVatCountry;
-  const supplierVatCode = r.text(root, [...supplier, "IdFiscaleIVA", "IdCodice"], "supplierVatCode");
+  const rawVatCode = r.text(root, [...supplier, "IdFiscaleIVA", "IdCodice"], "supplierVatCode");
+  const supplierVatCountry = options.normalizeVatCase ? upperAscii(rawVatCountry) : rawVatCountry;
+  const supplierVatCode = options.normalizeVatCase ? upperAscii(rawVatCode) : rawVatCode;
 
   const denomination = r.text(root, [...supplier, "Anagrafica", "Denominazione"], "supplierName");
   const firstName = r.text(root, [...supplier, "Anagrafica", "Nome"], "supplierName");

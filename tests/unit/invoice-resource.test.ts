@@ -45,16 +45,25 @@ describe("toInvoiceResource", () => {
   });
 });
 
-describe("parseFatturaPA normalizeVatCountry", () => {
+describe("parseFatturaPA normalizeVatCase", () => {
   it("refuses a lowercase country by default and uppercases it when asked", () => {
     const xml = buildFatturaPA({ vatCountry: "fr", vatCode: "ab123" });
     expect(parseFatturaPA(xml).ok).toBe(false);
-    const result = parseFatturaPA(xml, { normalizeVatCountry: true });
+    const result = parseFatturaPA(xml, { normalizeVatCase: true });
     expect(result.ok && result.data.supplierVatCountry).toBe("FR");
+    expect(result.ok && result.data.supplierVatCode).toBe("AB123");
   });
 
   it("still refuses a wrong country when normalising", () => {
-    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "ita" }), { normalizeVatCountry: true }).ok).toBe(false);
-    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "1t" }), { normalizeVatCountry: true }).ok).toBe(false);
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "ita" }), { normalizeVatCase: true }).ok).toBe(false);
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "1t" }), { normalizeVatCase: true }).ok).toBe(false);
+  });
+
+  it("converts ASCII letters only: ligatures and the dotless i are refused, not folded to FF or IT", () => {
+    const options = { normalizeVatCase: true };
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "ﬀ" }), options).ok).toBe(false);
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "ıt", vatCode: "01234567890" }), options).ok).toBe(false);
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "FR", vatCode: "ﬀ123" }), options).ok).toBe(false);
+    expect(parseFatturaPA(buildFatturaPA({ vatCountry: "FR", vatCode: "ıb123" }), options).ok).toBe(false);
   });
 });

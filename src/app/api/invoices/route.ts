@@ -73,7 +73,7 @@ export async function POST(request: Request) {
   }
 
   // Bytes, not a string: the parser checks size, signature and encoding itself.
-  const parsed = parseFatturaPA(new Uint8Array(await file.arrayBuffer()), { normalizeVatCountry: true });
+  const parsed = parseFatturaPA(new Uint8Array(await file.arrayBuffer()), { normalizeVatCase: true });
   if (!parsed.ok) {
     return errorResponse(422, "invalid_invoice", "Il file non è una fattura elettronica valida", {
       issues: parsed.issues,
@@ -100,7 +100,9 @@ export async function POST(request: Request) {
       );
     }
     if (error instanceof ValidationError) {
-      return errorResponse(422, "invalid_invoice", "Il file non è una fattura elettronica valida");
+      return errorResponse(422, "invalid_invoice", "Il file non è una fattura elettronica valida", {
+        issues: error.issues.map(({ field, message }) => ({ field, message })),
+      });
     }
     throw error;
   }
