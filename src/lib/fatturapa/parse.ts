@@ -128,15 +128,26 @@ const parser = new XMLParser({
  * - When `ImportoTotaleDocumento` is present it wins, even if it differs from the sum of
  *   the `DatiRiepilogo` (`ImponibileImporto` + `Imposta`), which is used only when it is absent.
  */
-export function parseFatturaPA(input: string | Uint8Array): FatturaPaResult {
+export function parseFatturaPA(input: string | Uint8Array, options: ParseOptions = {}): FatturaPaResult {
   try {
-    return parseUnsafe(input);
+    return parseUnsafe(input, options);
   } catch {
     return fail("file", NOT_XML);
   }
 }
 
-function parseUnsafe(input: string | Uint8Array): FatturaPaResult {
+export interface ParseOptions {
+  /**
+   * Uppercase the supplier VAT country and VAT code (`fr`/`ab123` become `FR`/`AB123`) instead of
+   * refusing the lowercase country. Only ASCII letters are converted, so `ﬀ` or a dotless `ı` stay
+   * invalid. Default: false.
+   */
+  normalizeVatCase?: boolean;
+}
+
+const upperAscii = (value: string | undefined) => value?.replace(/[a-z]/g, (c) => c.toUpperCase());
+
+function parseUnsafe(input: string | Uint8Array, options: ParseOptions): FatturaPaResult {
   const decoded = decodeInput(input);
   if ("error" in decoded) return fail("file", decoded.error);
 
@@ -167,8 +178,10 @@ function parseUnsafe(input: string | Uint8Array): FatturaPaResult {
   const supplier = ["FatturaElettronicaHeader", "CedentePrestatore", "DatiAnagrafici"];
   const general = ["DatiGenerali", "DatiGeneraliDocumento"];
 
-  const supplierVatCountry = r.text(root, [...supplier, "IdFiscaleIVA", "IdPaese"], "supplierVatCountry");
-  const supplierVatCode = r.text(root, [...supplier, "IdFiscaleIVA", "IdCodice"], "supplierVatCode");
+  const rawVatCountry = r.text(root, [...supplier, "IdFiscaleIVA", "IdPaese"], "supplierVatCountry");
+  const rawVatCode = r.text(root, [...supplier, "IdFiscaleIVA", "IdCodice"], "supplierVatCode");
+  const supplierVatCountry = options.normalizeVatCase ? upperAscii(rawVatCountry) : rawVatCountry;
+  const supplierVatCode = options.normalizeVatCase ? upperAscii(rawVatCode) : rawVatCode;
 
   const denomination = r.text(root, [...supplier, "Anagrafica", "Denominazione"], "supplierName");
   const firstName = r.text(root, [...supplier, "Anagrafica", "Nome"], "supplierName");

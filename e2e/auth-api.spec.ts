@@ -37,7 +37,7 @@ test("login with the demo user answers 200 with an httpOnly cookie and the user 
     email: DEMO_EMAIL,
     role: "OWNER",
     tenant: { id: expect.any(String), businessName: expect.any(String) },
-    _links: { self: { href: "/api/me" }, logout: { href: "/api/auth/logout", method: "POST" } },
+    _links: { self: { href: "/api/me" }, "upload-invoice": { href: "/api/invoices", method: "POST" }, logout: { href: "/api/auth/logout", method: "POST" } },
   });
   expect(JSON.stringify(body)).not.toMatch(/hash|argon2/i);
 

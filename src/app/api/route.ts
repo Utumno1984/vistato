@@ -1,5 +1,6 @@
 import { getRequestSession } from "@/lib/auth/session";
 import { buildLinks, resource } from "@/lib/hateoas";
+import { UPLOAD_INVOICE_LINK } from "@/lib/invoices/resource";
 
 /** API entry point: clients discover everything else from these links. */
 export async function GET(request: Request) {
@@ -12,6 +13,7 @@ export async function GET(request: Request) {
         { rel: "health", link: { href: "/api/health", title: "Service health" }, allowed: true },
         { rel: "login", link: { href: "/api/auth/login", method: "POST", title: "Accedi" }, allowed: !authenticated },
         { rel: "me", link: { href: "/api/me", title: "Utente corrente" }, allowed: authenticated },
+        { rel: "upload-invoice", link: UPLOAD_INVOICE_LINK, allowed: authenticated },
         { rel: "logout", link: { href: "/api/auth/logout", method: "POST", title: "Esci" }, allowed: authenticated },
       ]),
     ),

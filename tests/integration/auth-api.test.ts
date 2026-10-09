@@ -156,7 +156,7 @@ describe("POST /api/auth/login", () => {
       lastName: "Rossi",
       role: "OWNER",
       tenant: { id: tenantId, businessName: "Acme S.r.l." },
-      _links: { self: { href: "/api/me" }, logout: { href: "/api/auth/logout", method: "POST", title: "Esci" } },
+      _links: { self: { href: "/api/me" }, "upload-invoice": { href: "/api/invoices", method: "POST", title: "Carica fattura" }, logout: { href: "/api/auth/logout", method: "POST", title: "Esci" } },
     });
     const me = await (await getMe(withCookie("/api/me", tokenOf(res)))).json();
     expect(me).toEqual(body);

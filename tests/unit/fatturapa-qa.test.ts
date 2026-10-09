@@ -92,7 +92,7 @@ describe("QA #26: extra adversarial cases", () => {
 
   it("reads CDATA and ignores comments around values", () => {
     const result = parseFatturaPA(buildFatturaPA({ anagrafica: "<Denominazione><![CDATA[Rossi & Figli]]></Denominazione>" }));
-    if (result.ok) expect(result.data.supplierName).toBe("Rossi & Figli");
+    expect(result.ok && result.data.supplierName).toBe("Rossi & Figli");
   });
 
   it("refuses non-padded or ambiguous dates and a lowercase country", () => {

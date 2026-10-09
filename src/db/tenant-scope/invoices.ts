@@ -114,6 +114,10 @@ export interface TenantInvoices {
   create(input: CreateInvoiceInput, uploadedByUserId: string): Promise<Invoice>;
   /** The invoice with this ID in the tenant, or null (also for another tenant's ID or a non-UUID). */
   findById(id: string): Promise<Invoice | null>;
+  /** The invoice of the tenant with this supplier + number + date (the duplicate key), or null. */
+  findByBusinessKey(
+    key: Pick<CreateInvoiceInput, "supplierVatCountry" | "supplierVatCode" | "invoiceNumber" | "invoiceDate">,
+  ): Promise<Invoice | null>;
 }
 
 export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices {
@@ -155,6 +159,23 @@ export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices
         .select()
         .from(invoices)
         .where(and(eq(invoices.id, id), eq(invoices.tenantId, tenantId)))
+        .limit(1);
+      return invoice ?? null;
+    },
+
+    async findByBusinessKey(key) {
+      const [invoice] = await db
+        .select()
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.tenantId, tenantId),
+            eq(invoices.supplierVatCountry, key.supplierVatCountry),
+            eq(invoices.supplierVatCode, key.supplierVatCode),
+            eq(invoices.invoiceNumber, key.invoiceNumber),
+            eq(invoices.invoiceDate, key.invoiceDate),
+          ),
+        )
         .limit(1);
       return invoice ?? null;
     },

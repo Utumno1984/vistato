@@ -138,6 +138,7 @@ describe("userResource", () => {
       tenant: { id: "t", businessName: "Acme" },
       _links: {
         self: { href: "/api/me" },
+        "upload-invoice": { href: "/api/invoices", method: "POST", title: "Carica fattura" },
         logout: { href: "/api/auth/logout", method: "POST", title: "Esci" },
       },
     });
