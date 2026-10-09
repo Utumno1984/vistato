@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type DragEvent, type FormEvent } from "react";
 
+import { firstDroppedFile } from "@/lib/invoices/dropped-file";
 import {
   describeUploadResponse,
   MAX_UPLOAD_BYTES,
@@ -25,6 +26,45 @@ export function UploadForm() {
     ok: boolean;
     messages: string[];
   } | null>(null);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [fileName, setFileName] = useState("");
+
+  function syncName() {
+    setFileName(inputRef.current?.files?.[0]?.name ?? "");
+  }
+
+  // Enter/leave counter: leaving a child of the area must not end the drag state.
+  function onDragEnter(event: DragEvent) {
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function onDragOver(event: DragEvent) {
+    event.preventDefault();
+  }
+
+  function onDragLeave() {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function onDrop(event: DragEvent) {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (busy.current) return;
+    const file = firstDroppedFile(event.dataTransfer.files);
+    const input = inputRef.current;
+    if (!file || !input) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    syncName();
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,6 +89,7 @@ export function UploadForm() {
       setResult({ ok: outcome.kind === "success", messages: outcome.messages });
       if (outcome.kind === "success") {
         form.reset();
+        setFileName("");
         router.refresh();
       }
     } catch {
@@ -69,15 +110,59 @@ export function UploadForm() {
         noValidate
         className="mt-2 flex flex-wrap items-center gap-3"
       >
-        <label className="text-sm">
-          <span className="sr-only">File XML</span>
+        <label
+          data-state={dragging ? "dragover" : fileName ? "selected" : "empty"}
+          onDragEnter={onDragEnter}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          className={`flex w-full max-w-md cursor-pointer flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-6 text-center text-sm focus-within:ring-2 focus-within:ring-blue-500 ${
+            dragging
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-950"
+              : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          }`}
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="h-8 w-8 text-zinc-500"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M12 16V4m0 0L8 8m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+          </svg>
+          <span className="font-medium">
+            {dragging
+              ? "Rilascia il file qui"
+              : "Trascina qui il file XML o clicca per scegliere"}
+          </span>
+          <span className="text-xs text-zinc-500">Solo .xml, massimo 5 MB</span>
+          <span
+            id="upload-file-name"
+            aria-live="polite"
+            className="max-w-full truncate text-xs font-medium"
+          >
+            {fileName}
+          </span>
           <input
+            ref={inputRef}
             type="file"
             name="file"
+            aria-label="File XML"
+            aria-describedby="upload-file-name"
             accept=".xml,application/xml,text/xml"
-            className="text-sm"
+            onChange={syncName}
+            className="sr-only"
           />
         </label>
+        <a
+          href="/esempi/fattura-esempio.xml"
+          download
+          className="text-sm underline"
+        >
+          Scarica un esempio
+        </a>
         <button
           type="submit"
           disabled={pending}
