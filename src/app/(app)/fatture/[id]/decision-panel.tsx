@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 import { decideInvoiceAction } from "./actions";
 
@@ -89,14 +90,13 @@ export function DecisionPanel({
           <label className="text-sm font-medium" htmlFor="rejection-reason">
             Motivo (facoltativo)
           </label>
-          <textarea
+          <Textarea
             id="rejection-reason"
             name="reason"
             rows={4}
             maxLength={REASON_MAX_LENGTH}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            className="rounded-md border border-zinc-300 p-2 text-sm dark:border-zinc-700 dark:bg-transparent"
           />
           <div className="flex gap-3">
             <Button type="submit" variant="outline" disabled={pending}>

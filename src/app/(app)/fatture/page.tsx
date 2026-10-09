@@ -15,7 +15,9 @@ import {
   STATUS_LABELS,
   statusBadgeVariant,
 } from "@/lib/invoices/list-view";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 import { UploadForm } from "./upload-form";
@@ -31,7 +33,10 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
   const collection = toInvoiceCollection(result, query, { userId: auth.user.id, role: auth.user.role });
   const invoices = collection._embedded.invoices;
   const links = collection._links;
-  const linkClass = "rounded border border-zinc-300 px-3 py-1 text-sm dark:border-zinc-700";
+  // buttonVariants() alone keeps both `border-transparent` (base) and `border-border` (outline):
+  // cn() runs tailwind-merge so the variant colour wins, as it does inside <Button>.
+  const linkClass = (variant: "default" | "outline") => cn(buttonVariants({ variant }));
+  const pagerClass = linkClass("outline");
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
@@ -47,7 +52,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
               key={filter.label}
               href={listPageHref(filter.status, 1)}
               aria-current={active ? "page" : undefined}
-              className={`${linkClass} ${active ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : ""}`}
+              className={linkClass(active ? "default" : "outline")}
             >
               {filter.label}
             </Link>
@@ -95,7 +100,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
       {collection.totalPages > 0 || hasLink(collection, "prev") ? (
         <nav aria-label="Paginazione" className="mt-6 flex items-center gap-4">
           {hasLink(collection, "prev") ? (
-            <Link href={pageHrefFromCollectionLink(links.prev.href)} rel="prev" className={linkClass}>
+            <Link href={pageHrefFromCollectionLink(links.prev.href)} rel="prev" className={pagerClass}>
               Precedente
             </Link>
           ) : null}
@@ -103,7 +108,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
             <span className="text-sm">{`Pagina ${collection.page} di ${collection.totalPages}`}</span>
           ) : null}
           {hasLink(collection, "next") ? (
-            <Link href={pageHrefFromCollectionLink(links.next.href)} rel="next" className={linkClass}>
+            <Link href={pageHrefFromCollectionLink(links.next.href)} rel="next" className={pagerClass}>
               Successiva
             </Link>
           ) : null}
