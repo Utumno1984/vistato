@@ -98,16 +98,19 @@ async function waitUntilReady(input: Locator) {
 
 async function openWithKey(page: Page, key: string) {
   await setup(page);
+  // Subscribe to the chooser well before the key: the subscription is asynchronous on the
+  // Playwright server, and a key sent right after waitForEvent() can reach the browser before
+  // file chooser interception is on (the native dialog then opens, unseen, and the event never
+  // fires). The awaited steps below give the subscription time to settle.
+  const chooserPromise = page.waitForEvent("filechooser");
+  chooserPromise.catch(() => {});
   const input = page.getByLabel("File XML");
   await waitUntilReady(input);
   await page.bringToFront();
   await input.focus();
   await expect(input).toBeFocused();
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    page.keyboard.press(key),
-  ]);
-  expect(chooser).toBeTruthy();
+  await page.keyboard.press(key);
+  expect(await chooserPromise).toBeTruthy();
 }
 
 test("Tab reaches the area and Enter opens the file chooser", async ({ page }) => {

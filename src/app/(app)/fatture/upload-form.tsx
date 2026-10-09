@@ -169,7 +169,8 @@ export function UploadForm() {
             aria-describedby="upload-file-name"
             accept=".xml,application/xml,text/xml"
             onChange={syncName}
-            onKeyDown={onInputKeyDown}            className="sr-only"
+            onKeyDown={onInputKeyDown}
+            className="sr-only"
           />
         </label>
         <a
