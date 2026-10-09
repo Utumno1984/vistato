@@ -4,7 +4,7 @@ import type { InvoicePage, InvoiceStatus } from "@/db/tenant-scope";
 import type { ApiIssue } from "@/lib/http/errors";
 import { buildLinks, type Link, type Links } from "@/lib/hateoas";
 
-import { UPLOAD_INVOICE_LINK, toInvoiceResource, type InvoiceCaller } from "./resource";
+import { UPLOAD_INVOICE_LINK, toInvoiceResource, type InvoiceCaller, type InvoiceDeciders } from "./resource";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
@@ -86,7 +86,12 @@ function pageHref({ status, pageSize }: Pick<InvoiceListQuery, "status" | "pageS
  * `prev` exists only after the first page (past the last page it points to the last one),
  * `next` only before the last.
  */
-export function toInvoiceCollection(result: InvoicePage, query: InvoiceListQuery, caller: InvoiceCaller) {
+export function toInvoiceCollection(
+  result: InvoicePage,
+  query: InvoiceListQuery,
+  caller: InvoiceCaller,
+  deciders?: InvoiceDeciders,
+) {
   const { items, totalItems } = result;
   const { page, pageSize } = query;
   const totalPages = Math.ceil(totalItems / pageSize);
@@ -105,7 +110,7 @@ export function toInvoiceCollection(result: InvoicePage, query: InvoiceListQuery
     pageSize,
     totalItems,
     totalPages,
-    _embedded: { invoices: items.map((invoice) => toInvoiceResource(invoice, caller)) },
+    _embedded: { invoices: items.map((invoice) => toInvoiceResource(invoice, caller, deciders)) },
     _links: links,
   };
 }
