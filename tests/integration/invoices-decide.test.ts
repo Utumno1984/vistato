@@ -213,6 +213,43 @@ describe("POST /api/invoices/{id}/approve and /reject", () => {
     expect((await row(a.invoiceId)).status).toBe("PENDING");
   });
 
+  it("answers 400, not 500, for a reason with NUL, control, bidi or lone surrogate characters; invoice stays PENDING", async () => {
+    const bad = ["a\u0000b", "a\u0007b", "a\u0085b", "a‮b", "a⁦b", "a\uD800b", "a\uDC00"];
+    for (const reason of bad) {
+      const res = await call("reject", a.admin.token, a.invoiceId, { body: JSON.stringify({ reason }) });
+      expect(res.status, JSON.stringify(reason)).toBe(400);
+      expect((await res.json()).error).toBe("invalid_request");
+      await expect(
+        scope(a.tenantId).invoices.decide(a.invoiceId, { decision: "REJECTED", userId: a.admin.id, reason }),
+      ).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect((await row(a.invoiceId)).status).toBe("PENDING");
+  });
+
+  it("accepts tabs and line breaks in the reason and stores it NFC-normalised and trimmed", async () => {
+    const res = await call("reject", a.admin.token, a.invoiceId, {
+      body: JSON.stringify({ reason: " Riga 1\n\tRiga 2 café " }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).rejectionReason).toBe("Riga 1\n\tRiga 2 café");
+  });
+
+  it("answers 413 for a reject body over 8 KB, even if the reason alone would be fine", async () => {
+    const res = await call("reject", a.admin.token, a.invoiceId, {
+      body: JSON.stringify({ reason: "ok", padding: "x".repeat(9000) }),
+    });
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe("payload_too_large");
+    expect((await row(a.invoiceId)).status).toBe("PENDING");
+  });
+
+  it("shows decidedBy null on a PENDING invoice", async () => {
+    const res = await getInvoice(new Request(`${BASE}/api/invoices/${a.invoiceId}`, cookie(a.admin.token)), {
+      params: Promise.resolve({ id: a.invoiceId }),
+    });
+    expect((await res.json()).decidedBy).toBeNull();
+  });
+
   it("answers 403 forbidden to a USER for approve and reject, leaving the invoice PENDING", async () => {
     for (const action of ["approve", "reject"] as const) {
       const res = await call(action, a.user.token, a.invoiceId);

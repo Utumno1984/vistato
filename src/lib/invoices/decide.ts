@@ -3,17 +3,24 @@ import type { InvoiceDecision } from "@/db/tenant-scope";
 import { requireSession } from "@/lib/auth/session";
 import { errorResponse, invalidRequest, type ApiIssue } from "@/lib/http/errors";
 
+import { noteTextSchema } from "@/lib/validation/text";
+
 import { canDecideInvoice, isDecisionRole } from "./permissions";
 import { loadDeciders, toInvoiceResource } from "./resource";
 
+/** Limit on the raw reason text (UTF-16 code units, before trimming), as for the other free-text fields. */
 export const REJECTION_REASON_MAX_LENGTH = 1000;
+
+/** Anti-abuse cap on the request body of a rejection (the reason itself is at most 1000 characters). */
+export const MAX_REJECT_BODY_BYTES = 8 * 1024;
 
 /**
  * Reads the optional `{ reason }` body of a rejection. An empty body is fine; anything that
  * is not a JSON object, or a `reason` that is not a string or is too long, is a 400.
  */
-async function readReason(request: Request): Promise<{ reason: string | null } | { issues: ApiIssue[] }> {
-  const text = await request.text();
+async function readReason(request: Request): Promise<{ reason: string | null } | { issues: ApiIssue[] } | "too_large"> {
+  const text = await readLimitedText(request);
+  if (text === null) return "too_large";
   if (text.trim() === "") return { reason: null };
   let body: unknown;
   try {
@@ -26,11 +33,33 @@ async function readReason(request: Request): Promise<{ reason: string | null } |
   }
   const reason = (body as { reason?: unknown }).reason;
   if (reason === undefined) return { reason: null };
-  if (typeof reason !== "string") return { issues: [{ field: "reason", message: "Il motivo deve essere una stringa" }] };
-  if (reason.length > REJECTION_REASON_MAX_LENGTH) {
-    return { issues: [{ field: "reason", message: `Il motivo può avere al massimo ${REJECTION_REASON_MAX_LENGTH} caratteri` }] };
+  // Same schema as the data layer. The 1000 limit is on the raw text (before trimming).
+  const parsed = noteTextSchema(REJECTION_REASON_MAX_LENGTH, "Il motivo deve essere una stringa").safeParse(reason);
+  if (!parsed.success) {
+    return { issues: parsed.error.issues.map((issue) => ({ field: "reason", message: issue.message })) };
   }
-  return { reason };
+  return { reason: parsed.data || null };
+}
+
+/** The body as text, or null as soon as it exceeds `MAX_REJECT_BODY_BYTES`. */
+async function readLimitedText(request: Request): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_REJECT_BODY_BYTES) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_REJECT_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 /**
@@ -53,6 +82,9 @@ export async function decideInvoice(request: Request, id: string, decision: Invo
   let reason: string | null = null;
   if (decision === "REJECTED") {
     const parsed = await readReason(request);
+    if (parsed === "too_large") {
+      return errorResponse(413, "payload_too_large", "Il corpo della richiesta supera la dimensione massima di 8 KB");
+    }
     if ("issues" in parsed) return invalidRequest(parsed.issues);
     reason = parsed.reason;
   }

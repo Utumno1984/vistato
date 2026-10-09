@@ -24,10 +24,10 @@ export interface InvoiceDecider {
 
 export type InvoiceDeciders = ReadonlyMap<string, InvoiceDecider>;
 
-/** Reads, inside the tenant, the users who decided on these invoices (one query per distinct user). */
+/** Reads, inside the tenant, the users who decided on these invoices (a single query). */
 export async function loadDeciders(scope: TenantScope, invoices: readonly Invoice[]): Promise<InvoiceDeciders> {
-  const ids = [...new Set(invoices.flatMap((invoice) => (invoice.decidedByUserId ? [invoice.decidedByUserId] : [])))];
-  const users = await Promise.all(ids.map((id) => scope.users.findById(id)));
+  const ids = invoices.flatMap((invoice) => (invoice.decidedByUserId ? [invoice.decidedByUserId] : []));
+  const users = await scope.users.findByIds(ids);
   const deciders = new Map<string, InvoiceDecider>();
   for (const user of users) {
     if (user) deciders.set(user.id, { id: user.id, firstName: user.firstName, lastName: user.lastName });
@@ -38,10 +38,10 @@ export async function loadDeciders(scope: TenantScope, invoices: readonly Invoic
 /**
  * The single source of the invoice API resource and of its links (API and pages).
  * `approve` and `reject` follow `canDecideInvoice`, the rule the endpoints enforce.
- * `decidedBy` is present only for a decided invoice whose decider is in `deciders`.
+ * `decidedBy` is null for a PENDING invoice (and when the decider was not loaded).
  */
 export function toInvoiceResource(invoice: Invoice, caller: InvoiceCaller, deciders?: InvoiceDeciders) {
-  const decidedBy = invoice.decidedByUserId ? deciders?.get(invoice.decidedByUserId) : undefined;
+  const decidedBy = (invoice.decidedByUserId ? deciders?.get(invoice.decidedByUserId) : undefined) ?? null;
   const canDecide = canDecideInvoice(caller, invoice);
   return resource(
     {

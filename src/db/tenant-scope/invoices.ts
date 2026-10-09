@@ -11,7 +11,7 @@ import {
   ValidationError,
 } from "@/db/errors";
 import { invoices, invoiceStatus, type Invoice as InvoiceRow } from "@/db/schema";
-import { requiredTextSchema, tooLongMessage, unicodeTrim } from "@/lib/validation/text";
+import { noteTextSchema, requiredTextSchema, tooLongMessage, unicodeTrim } from "@/lib/validation/text";
 
 import type { TenantId } from "./tenant-id";
 
@@ -99,10 +99,8 @@ const idSchema = z.uuid();
 
 const decideInvoiceInputSchema = z.object({
   decision: z.enum(["APPROVED", "REJECTED"]),
-  reason: z
-    .string({ message: "Il motivo deve essere una stringa" })
-    .max(INVOICE_TEXT_MAX_RAW_LENGTH, { message: tooLongMessage(INVOICE_TEXT_MAX_RAW_LENGTH) })
-    .nullish(),
+  // The 1000 limit is on the raw text (before trimming), like the other free-text fields.
+  reason: noteTextSchema(INVOICE_TEXT_MAX_RAW_LENGTH, "Il motivo deve essere una stringa").nullish(),
 });
 
 /** Input of `invoices.list`: an optional status filter and a 1-based page. */
@@ -251,7 +249,7 @@ export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices
       const { decision, reason } = parse(decideInvoiceInputSchema, { decision: input.decision, reason: input.reason });
       if (!idSchema.safeParse(input.userId).success) throw new UserNotInTenantError(String(input.userId));
       if (!idSchema.safeParse(id).success) return { outcome: "not_found" };
-      const rejectionReason = decision === "REJECTED" && reason ? unicodeTrim(reason) || null : null;
+      const rejectionReason = decision === "REJECTED" && reason || null;
       try {
         const [decided] = await db
           .update(invoices)

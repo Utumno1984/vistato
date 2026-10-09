@@ -76,6 +76,27 @@ export interface RequiredTextOptions {
   maxLength: number;
 }
 
+/** Control and bidi characters that are not allowed even in multi-line text (tab, LF and CR are). */
+const FORBIDDEN_IN_NOTE = /(?![\t\n\r])[\p{Cc}\p{Bidi_Control}]/u;
+
+/**
+ * Optional free multi-line note (e.g. a rejection reason). The cap applies to the RAW input
+ * (UTF-16 code units, before trimming and normalisation), like the other text fields.
+ * Rejects lone surrogates, control characters other than tab/LF/CR, and bidi controls;
+ * then NFC-normalises and trims. Blank after trimming gives an empty string.
+ */
+export function noteTextSchema(maxLength: number, notStringMessage = "Deve essere una stringa") {
+  return z
+    .string({ message: notStringMessage })
+    .max(maxLength, { message: tooLongMessage(maxLength), abort: true })
+    .refine((value) => !LONE_SURROGATE.test(value), { message: "Contiene caratteri non validi", abort: true })
+    .refine((value) => !FORBIDDEN_IN_NOTE.test(value), {
+      message: "Contiene caratteri di controllo non ammessi",
+      abort: true,
+    })
+    .overwrite((value) => unicodeTrim(value.normalize("NFC")));
+}
+
 /**
  * Required single-line text, e.g. a business name:
  * 1. raw length capped before any processing;

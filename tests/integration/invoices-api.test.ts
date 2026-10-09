@@ -91,6 +91,7 @@ describe("POST /api/invoices", () => {
       status: "PENDING",
       uploadedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
       decidedAt: null,
+      decidedBy: null,
       rejectionReason: null,
       _links: { self: { href: `/api/invoices/${body.id}` }, collection: { href: "/api/invoices" } },
     });

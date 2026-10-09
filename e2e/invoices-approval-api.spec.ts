@@ -97,6 +97,26 @@ test("a reason over 1000 characters, a non-string or a non-JSON body answer 400 
   expect((await admin.post(`/api/invoices/${id}/reject`, { data: { reason: "x".repeat(1000) } })).status()).toBe(200);
 });
 
+test("a reason with a NUL or other control characters answers 400 (not 500) and the invoice stays PENDING", async ({
+  playwright,
+  baseURL,
+}) => {
+  const { admin, user } = await setup(playwright, baseURL!);
+  const { id } = await upload(user);
+  for (const reason of ["a\u0000b", "a‮b", "a\uD800b"]) {
+    const res = await admin.post(`/api/invoices/${id}/reject`, {
+      headers: { "content-type": "application/json" },
+      data: JSON.stringify({ reason }),
+    });
+    expect(res.status(), JSON.stringify(reason)).toBe(400);
+    expect((await res.json()).error).toBe("invalid_request");
+  }
+  const big = await admin.post(`/api/invoices/${id}/reject`, { data: { reason: "ok", padding: "x".repeat(9000) } });
+  expect(big.status()).toBe(413);
+  const current = await (await admin.get(`/api/invoices/${id}`)).json();
+  expect(current).toMatchObject({ status: "PENDING", decidedBy: null });
+});
+
 test("a USER sees no approve/reject links, gets 403 forbidden and the invoice stays PENDING", async ({
   playwright,
   baseURL,

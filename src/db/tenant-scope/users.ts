@@ -1,4 +1,4 @@
-import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client";
@@ -102,6 +102,8 @@ export interface TenantUsers {
   list(): Promise<User[]>;
   /** The user with this ID in the tenant, or null (also for another tenant's ID or a non-UUID). */
   findById(id: string): Promise<User | null>;
+  /** The users of the tenant with these IDs, in one query (unknown, foreign and non-UUID IDs are skipped). */
+  findByIds(ids: readonly string[]): Promise<User[]>;
   /**
    * Creates a user in the tenant (status INVITED unless given).
    * @throws ValidationError when the input is invalid (nothing is inserted).
@@ -143,6 +145,15 @@ export function tenantUsers(db: Database, tenantId: TenantId): TenantUsers {
         .from(users)
         .where(eq(users.tenantId, tenantId))
         .orderBy(asc(users.createdAt), asc(users.id));
+    },
+
+    async findByIds(ids) {
+      const valid = [...new Set(ids)].filter((id) => userIdSchema.safeParse(id).success);
+      if (valid.length === 0) return [];
+      return db
+        .select(userColumns)
+        .from(users)
+        .where(and(eq(users.tenantId, tenantId), inArray(users.id, valid)));
     },
 
     async findById(id) {

@@ -39,6 +39,7 @@ describe("toInvoiceResource", () => {
       status: "PENDING",
       uploadedAt: "2025-03-01T10:00:00.000Z",
       decidedAt: null,
+      decidedBy: null,
       rejectionReason: null,
       _links: { self: { href: `/api/invoices/${invoice.id}` }, collection: { href: "/api/invoices" } },
     });
