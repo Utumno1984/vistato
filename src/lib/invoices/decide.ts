@@ -1,6 +1,6 @@
 import { UserNotInTenantError, ValidationError } from "@/db/errors";
 import type { InvoiceDecision } from "@/db/tenant-scope";
-import { requireSession } from "@/lib/auth/session";
+import { requireSession, type AuthContext } from "@/lib/auth/session";
 import { errorResponse, invalidRequest, type ApiIssue } from "@/lib/http/errors";
 
 import { noteTextSchema } from "@/lib/validation/text";
@@ -33,7 +33,11 @@ async function readReason(request: Request): Promise<{ reason: string | null } |
   }
   const reason = (body as { reason?: unknown }).reason;
   if (reason === undefined) return { reason: null };
-  // Same schema as the data layer. The 1000 limit is on the raw text (before trimming).
+  return parseReason(reason);
+}
+
+/** Validates a reason with the schema of the data layer (the 1000 limit is on the raw text, before trimming). */
+export function parseReason(reason: unknown): { reason: string | null } | { issues: ApiIssue[] } {
   const parsed = noteTextSchema(REJECTION_REASON_MAX_LENGTH, "Il motivo deve essere una stringa").safeParse(reason);
   if (!parsed.success) {
     return { issues: parsed.error.issues.map((issue) => ({ field: "reason", message: issue.message })) };
@@ -69,7 +73,20 @@ async function readLimitedText(request: Request): Promise<string | null> {
 export async function decideInvoice(request: Request, id: string, decision: InvoiceDecision): Promise<Response> {
   const auth = await requireSession(request);
   if (auth instanceof Response) return auth;
+  return decideInvoiceAs(auth, id, decision, () => readReason(request));
+}
 
+/**
+ * The decision itself, for an already authenticated caller: the endpoints and the detail
+ * page's Server Action share it, so permissions, validation and conflicts are identical.
+ * `readBody` is called only for a rejection, after the invoice and role checks.
+ */
+export async function decideInvoiceAs(
+  auth: AuthContext,
+  id: string,
+  decision: InvoiceDecision,
+  readBody: () => Promise<{ reason: string | null } | { issues: ApiIssue[] } | "too_large">,
+): Promise<Response> {
   const invoice = await auth.scope.invoices.findById(id);
   if (!invoice) return errorResponse(404, "not_found", "Fattura non trovata");
 
@@ -81,7 +98,7 @@ export async function decideInvoice(request: Request, id: string, decision: Invo
   // The reason only matters for a rejection: approving ignores the body altogether.
   let reason: string | null = null;
   if (decision === "REJECTED") {
-    const parsed = await readReason(request);
+    const parsed = await readBody();
     if (parsed === "too_large") {
       return errorResponse(413, "payload_too_large", "Il corpo della richiesta supera la dimensione massima di 8 KB");
     }

@@ -61,6 +61,11 @@ describe("formatDateTime", () => {
     expect(formatDateTime("2026-03-05T23:30:00Z")).toBe("06/03/2026 00:30");
   });
 
+  it("follows the daylight saving change at the end of October", () => {
+    expect(formatDateTime("2026-10-24T22:30:00Z")).toBe("25/10/2026 00:30");
+    expect(formatDateTime("2026-10-25T23:30:00Z")).toBe("26/10/2026 00:30");
+  });
+
   it("returns an invalid instant as text", () => {
     expect(formatDateTime("boh")).toBe("boh");
   });

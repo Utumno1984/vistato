@@ -43,7 +43,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
             <Link
               key={filter.label}
               href={listPageHref(filter.status, 1)}
-              aria-current={active ? "true" : undefined}
+              aria-current={active ? "page" : undefined}
               className={`${linkClass} ${active ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : ""}`}
             >
               {filter.label}
@@ -70,7 +70,11 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
               {invoices.map((invoice) => (
                 <tr key={invoice.id} className="border-b border-zinc-200 dark:border-zinc-800">
                   <td className="max-w-xs break-words py-2 pr-4">{invoice.supplier.name}</td>
-                  <td className="max-w-xs break-words py-2 pr-4">{invoice.number}</td>
+                  <td className="max-w-xs break-words py-2 pr-4">
+                    <Link href={`/fatture/${invoice.id}`} className="underline">
+                      {invoice.number}
+                    </Link>
+                  </td>
                   <td className="whitespace-nowrap py-2 pr-4">{formatDate(invoice.date)}</td>
                   <td className="whitespace-nowrap py-2 pr-4 text-right">
                     {formatAmount(invoice.total.amountCents, invoice.total.currency)}
@@ -90,7 +94,9 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
               Precedente
             </Link>
           ) : null}
-          <span className="text-sm">{`Pagina ${collection.page} di ${collection.totalPages}`}</span>
+          {collection.page <= collection.totalPages ? (
+            <span className="text-sm">{`Pagina ${collection.page} di ${collection.totalPages}`}</span>
+          ) : null}
           {hasLink(collection, "next") ? (
             <Link href={pageHrefFromCollectionLink(links.next.href)} rel="next" className={linkClass}>
               Successiva
