@@ -93,6 +93,35 @@ test("the status filter changes the URL, narrows the table and highlights the ac
   await expect(rows(page)).toHaveCount(4);
 });
 
+async function expectVisibleBorders(page: Page, scheme: "light" | "dark") {
+  {
+    const tenant = await newTenant();
+    seedInvoices(tenant, manyInvoices(25));
+    await page.emulateMedia({ colorScheme: scheme });
+    await login(page, tenant);
+    await page.goto("/fatture");
+    const filter = page.getByRole("navigation", { name: "Filtro per stato" });
+    const borderColor = (link: ReturnType<Page["getByRole"]>) =>
+      link.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { color: style.borderTopColor, width: style.borderTopWidth };
+      });
+    for (const link of [filter.getByRole("link", { name: "Approvate" }), page.getByRole("link", { name: "Successiva" })]) {
+      const { color, width } = await borderColor(link);
+      expect(width).not.toBe("0px");
+      expect(color).not.toMatch(/rgba\(\s*0,\s*0,\s*0,\s*0\s*\)|transparent/);
+    }
+  }
+}
+
+test("inactive filters and Successiva have a visible border in the light theme", async ({ page }) => {
+  await expectVisibleBorders(page, "light");
+});
+
+test("inactive filters and Successiva have a visible border in the dark theme", async ({ page }) => {
+  await expectVisibleBorders(page, "dark");
+});
+
 test("25 invoices: 20 rows on page 1 without Precedente, 5 on page 2 keeping the status", async ({ page }) => {
   const tenant = await newTenant();
   seedInvoices(tenant, manyInvoices(25));

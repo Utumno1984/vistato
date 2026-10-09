@@ -15,6 +15,7 @@ import {
   STATUS_LABELS,
   statusBadgeVariant,
 } from "@/lib/invoices/list-view";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -32,7 +33,10 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
   const collection = toInvoiceCollection(result, query, { userId: auth.user.id, role: auth.user.role });
   const invoices = collection._embedded.invoices;
   const links = collection._links;
-  const pagerClass = buttonVariants({ variant: "outline" });
+  // buttonVariants() alone keeps both `border-transparent` (base) and `border-border` (outline):
+  // cn() runs tailwind-merge so the variant colour wins, as it does inside <Button>.
+  const linkClass = (variant: "default" | "outline") => cn(buttonVariants({ variant }));
+  const pagerClass = linkClass("outline");
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
@@ -48,7 +52,7 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
               key={filter.label}
               href={listPageHref(filter.status, 1)}
               aria-current={active ? "page" : undefined}
-              className={buttonVariants({ variant: active ? "default" : "outline" })}
+              className={linkClass(active ? "default" : "outline")}
             >
               {filter.label}
             </Link>
