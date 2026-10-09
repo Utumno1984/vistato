@@ -15,6 +15,8 @@ import {
   STATUS_LABELS,
 } from "@/lib/invoices/list-view";
 
+import { UploadForm } from "./upload-form";
+
 export const metadata: Metadata = { title: "Fatture · Vistato" };
 
 /** The tenant's invoices: table, status filter and paging, all built from the HAL collection. */
@@ -31,6 +33,8 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/fatture
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
       <h1 className="text-3xl font-semibold tracking-tight">Fatture</h1>
+
+      {hasLink(collection, "upload-invoice") ? <UploadForm href={links["upload-invoice"].href} /> : null}
 
       <nav aria-label="Filtro per stato" className="mt-6 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((filter) => {
