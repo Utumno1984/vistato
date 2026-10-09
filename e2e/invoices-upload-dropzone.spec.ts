@@ -86,15 +86,18 @@ test("clicking the area opens the file chooser; the chosen name is shown and the
   await expect(area(page)).not.toContainText("Caffè e più.xml");
 });
 
+/**
+ * Waits for the "hydration committed and effects run" signal. A key event sent earlier is only
+ * queued by React and replayed later, without the user activation the file chooser needs.
+ */
+async function waitUntilReady(input: Locator) {
+  await expect(input).toHaveAttribute("data-ready", "true");
+}
+
 async function openWithKey(page: Page, key: string) {
   await setup(page);
   const input = page.getByLabel("File XML");
-  // Wait until React has hydrated the field: a re-render after focus must not steal it.
-  await expect
-    .poll(() =>
-      input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
-    )
-    .toBe(true);
+  await waitUntilReady(input);
   await page.bringToFront();
   await input.focus();
   await expect(input).toBeFocused();
@@ -282,11 +285,7 @@ for (const key of ["Enter", "Space"]) {
   test(`${key} opens the file chooser exactly once`, async ({ page }) => {
     await setup(page);
     const input = page.getByLabel("File XML");
-    await expect
-      .poll(() =>
-        input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
-      )
-      .toBe(true);
+    await waitUntilReady(input);
     let opened = 0;
     page.on("filechooser", () => (opened += 1));
     await page.bringToFront();
