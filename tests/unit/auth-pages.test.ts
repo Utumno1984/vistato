@@ -76,6 +76,16 @@ describe("proxy", () => {
     expect(proxy(get).status).toBe(307);
   });
 
+  it("drops a client-supplied x-vistato-path header on a Server Action POST", () => {
+    const action = new NextRequest("http://localhost:3100/fatture", {
+      method: "POST",
+      headers: { "next-action": "abc", "x-vistato-path": "/evil", "x-other": "1" },
+    });
+    const forwarded = (proxy(action).headers.get("x-middleware-override-headers") ?? "").split(",");
+    expect(forwarded).toContain("x-other");
+    expect(forwarded).not.toContain("x-vistato-path");
+  });
+
   it("matches only /fatture and below: not /, /login, /api", () => {
     expect(config.matcher).toEqual(["/fatture", "/fatture/:path*"]);
   });

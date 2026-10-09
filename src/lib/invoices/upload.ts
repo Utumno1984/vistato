@@ -1,12 +1,14 @@
 import { DuplicateInvoiceError, ValidationError } from "@/db/errors";
 import type { AuthContext } from "@/lib/auth/session";
-import { MAX_FATTURAPA_BYTES, parseFatturaPA } from "@/lib/fatturapa/parse";
+import { parseFatturaPA } from "@/lib/fatturapa/parse";
 import { errorResponse, invalidRequest } from "@/lib/http/errors";
 
 import { toInvoiceResource } from "./resource";
 
-/** Largest accepted file (5 MB). The parser enforces the same limit on the bytes it receives. */
-export const MAX_UPLOAD_BYTES = MAX_FATTURAPA_BYTES;
+import { MAX_UPLOAD_BYTES } from "./upload-messages";
+
+/** Largest accepted file (5 MB, one constant shared with the form; the parser enforces the same limit). */
+export { MAX_UPLOAD_BYTES };
 
 export const tooLargeResponse = () =>
   errorResponse(413, "payload_too_large", "Il file supera la dimensione massima di 5 MB");

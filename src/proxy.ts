@@ -12,7 +12,12 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   // Server Actions check the session themselves and answer "unauthenticated" to the form,
   // which then goes to /login; a redirect here would be swallowed by the action call.
-  if (request.headers.has("next-action") && request.method === "POST") return NextResponse.next();
+  if (request.headers.has("next-action") && request.method === "POST") {
+    // Never let a client-supplied path header through.
+    const headers = new Headers(request.headers);
+    headers.delete(REQUEST_PATH_HEADER);
+    return NextResponse.next({ request: { headers } });
+  }
   if (parseSessionToken(request.headers.get("cookie"))) {
     // Lets the server layout rebuild `next` if the cookie turns out not to map to a session.
     const headers = new Headers(request.headers);

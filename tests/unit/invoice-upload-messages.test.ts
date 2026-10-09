@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { describeUploadResponse } from "@/lib/invoices/upload-messages";
+import { MAX_FATTURAPA_BYTES } from "@/lib/fatturapa/parse";
+import { describeUploadResponse, MAX_UPLOAD_BYTES } from "@/lib/invoices/upload-messages";
 
 const error = (message: string) => ({ kind: "error", messages: [message] });
 
@@ -51,6 +52,24 @@ describe("describeUploadResponse", () => {
       kind: "error",
       messages: ["La data della fattura non è valida", "Numero mancante"],
     });
+  });
+
+  it("shows each repeated validation message once, in order", () => {
+    expect(
+      describeUploadResponse(422, {
+        error: "invalid_invoice",
+        issues: [
+          { field: "a", message: "Uno" },
+          { field: "b", message: "Due" },
+          { field: "c", message: "Uno" },
+          { field: "d", message: "Due" },
+        ],
+      }),
+    ).toEqual({ kind: "error", messages: ["Uno", "Due"] });
+  });
+
+  it("shares the 5 MB limit with the parser", () => {
+    expect(MAX_UPLOAD_BYTES).toBe(MAX_FATTURAPA_BYTES);
   });
 
   it("falls back to a generic invalid-invoice message without issues", () => {

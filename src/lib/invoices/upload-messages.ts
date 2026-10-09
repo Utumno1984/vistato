@@ -6,6 +6,7 @@
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const UPLOAD_SUCCESS_MESSAGE = "Fattura caricata";
 export const UPLOAD_NO_FILE_MESSAGE = "Seleziona un file XML";
+export const UPLOAD_ONE_FILE_MESSAGE = "Carica un solo file per volta";
 export const UPLOAD_FALLBACK_MESSAGE = "Caricamento non riuscito, riprova";
 
 export type UploadOutcome =
@@ -20,10 +21,12 @@ interface ApiBody {
 
 function issueMessages(body: ApiBody): string[] {
   if (!Array.isArray(body.issues)) return [];
-  return body.issues.flatMap((issue: unknown) => {
+  const messages = body.issues.flatMap((issue: unknown) => {
     const message = (issue as { message?: unknown } | null)?.message;
     return typeof message === "string" && message ? [message] : [];
   });
+  // A repeated element can make the parser report the same problem more than once.
+  return [...new Set(messages)];
 }
 
 /** `body` is the parsed JSON of the response, or null when it was not JSON. */

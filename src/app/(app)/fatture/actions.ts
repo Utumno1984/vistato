@@ -2,7 +2,7 @@
 
 import { getSessionFromCookies } from "@/lib/auth/session";
 import { uploadInvoiceFile } from "@/lib/invoices/upload";
-import { describeUploadResponse, type UploadOutcome } from "@/lib/invoices/upload-messages";
+import { describeUploadResponse, UPLOAD_ONE_FILE_MESSAGE, type UploadOutcome } from "@/lib/invoices/upload-messages";
 
 /**
  * Server Action of the upload form: same service as `POST /api/invoices`, same session.
@@ -13,7 +13,9 @@ export async function uploadInvoiceAction(formData: FormData): Promise<UploadOut
   const auth = await getSessionFromCookies();
   if (!auth) return { kind: "unauthenticated" };
 
-  const file = formData.get("file");
+  const files = formData.getAll("file");
+  if (files.length > 1) return { kind: "error", messages: [UPLOAD_ONE_FILE_MESSAGE] };
+  const file = files[0];
   if (!(file instanceof File)) {
     return describeUploadResponse(400, { error: "invalid_request", issues: [{ field: "file", message: "obbligatorio" }] });
   }

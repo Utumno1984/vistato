@@ -183,3 +183,19 @@ test("no console errors after a successful and a failed upload", async ({
   await expect(alertOf(page)).toBeVisible();
   expect(problems).toEqual([]);
 });
+
+test("a repeated <DatiGenerali> shows each validation message only once", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto("/fatture");
+  const xml = buildInvoiceXml({ date: "2024-13-45" });
+  const block = /<DatiGenerali>[\s\S]*<\/DatiGenerali>/.exec(xml)![0];
+  await chooseAndSend(page, xmlFile(xml.replace(block, block + block)));
+  const paragraphs = alertOf(page).locator("p");
+  await expect(paragraphs.first()).toBeVisible();
+  const texts = await paragraphs.allTextContents();
+  expect(texts.length).toBeGreaterThan(0);
+  expect(new Set(texts).size).toBe(texts.length);
+  await expect(rows(page)).toHaveCount(0);
+});

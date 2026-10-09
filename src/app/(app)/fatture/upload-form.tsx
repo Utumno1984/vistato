@@ -91,8 +91,8 @@ export function UploadForm() {
           role={result.ok ? "status" : "alert"}
           className={`mt-2 text-sm ${result.ok ? "text-green-700" : "text-red-700"}`}
         >
-          {result.messages.map((message) => (
-            <p key={message}>{message}</p>
+          {result.messages.map((message, index) => (
+            <p key={`${index}:${message}`}>{message}</p>
           ))}
         </div>
       ) : null}
