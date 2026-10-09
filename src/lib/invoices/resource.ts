@@ -4,6 +4,9 @@ import { buildLinks, resource, type Link } from "@/lib/hateoas";
 /** Link to the upload action, shared by `/api` and `/api/me` (any active user may upload). */
 export const UPLOAD_INVOICE_LINK: Link = { href: "/api/invoices", method: "POST", title: "Carica fattura" };
 
+/** Link to the collection of the tenant's invoices (GET). */
+export const INVOICES_COLLECTION_LINK: Link = { href: "/api/invoices", title: "Elenco fatture" };
+
 /** Who is asking: reserved for the links that depend on permissions (approve, reject, ...). */
 export interface InvoiceCaller {
   userId: string;
@@ -33,6 +36,9 @@ export function toInvoiceResource(invoice: Invoice, caller: InvoiceCaller) {
       decidedAt: invoice.decidedAt ? invoice.decidedAt.toISOString() : null,
       rejectionReason: invoice.rejectionReason,
     },
-    buildLinks([{ rel: "self", link: { href: `/api/invoices/${invoice.id}` }, allowed: true }]),
+    buildLinks([
+      { rel: "self", link: { href: `/api/invoices/${invoice.id}` }, allowed: true },
+      { rel: "collection", link: { href: "/api/invoices" }, allowed: true },
+    ]),
   );
 }
