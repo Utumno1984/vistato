@@ -1,4 +1,4 @@
-import { and, count, desc, eq, getTableColumns } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client";
@@ -11,12 +11,13 @@ import {
   ValidationError,
 } from "@/db/errors";
 import { invoices, invoiceStatus, type Invoice as InvoiceRow } from "@/db/schema";
-import { requiredTextSchema, tooLongMessage, unicodeTrim } from "@/lib/validation/text";
+import { noteTextSchema, requiredTextSchema, tooLongMessage, unicodeTrim } from "@/lib/validation/text";
 
 import type { TenantId } from "./tenant-id";
 
 const DUPLICATE_UNIQUE_CONSTRAINT = "invoices_tenant_supplier_number_date_unique";
 const UPLOADER_FOREIGN_KEY = "invoices_uploaded_by_user_id_tenant_id_users_fk";
+const DECIDER_FOREIGN_KEY = "invoices_decided_by_user_id_tenant_id_users_fk";
 const TENANT_FOREIGN_KEY = "invoices_tenant_id_tenants_id_fk";
 
 /** Technical anti-abuse cap on raw free-text fields (before trimming), not a domain rule. */
@@ -96,6 +97,12 @@ export type CreateInvoiceInput = z.input<typeof createInvoiceInputSchema>;
 
 const idSchema = z.uuid();
 
+const decideInvoiceInputSchema = z.object({
+  decision: z.enum(["APPROVED", "REJECTED"]),
+  // The 1000 limit is on the raw text (before trimming), like the other free-text fields.
+  reason: noteTextSchema(INVOICE_TEXT_MAX_RAW_LENGTH, "Il motivo deve essere una stringa").nullish(),
+});
+
 /** Input of `invoices.list`: an optional status filter and a 1-based page. */
 export const listInvoicesInputSchema = z.object({
   status: z.enum(invoiceStatus.enumValues).optional(),
@@ -104,6 +111,21 @@ export const listInvoicesInputSchema = z.object({
 });
 
 export type ListInvoicesInput = z.input<typeof listInvoicesInputSchema>;
+
+export type InvoiceDecision = "APPROVED" | "REJECTED";
+
+export interface DecideInvoiceInput {
+  decision: InvoiceDecision;
+  /** The deciding user: must belong to the tenant (composite foreign key). */
+  userId: string;
+  /** Rejection reason: trimmed, blank means none, at most 1000 characters. Ignored when approving. */
+  reason?: string | null;
+}
+
+export type DecideInvoiceResult =
+  | { outcome: "decided"; invoice: Invoice }
+  | { outcome: "not_found" }
+  | { outcome: "already_decided"; invoice: Invoice };
 
 export interface InvoicePage {
   items: Invoice[];
@@ -139,6 +161,14 @@ export interface TenantInvoices {
    * @throws ValidationError when `page` or `pageSize` is out of range or `status` is unknown.
    */
   list(input: ListInvoicesInput): Promise<InvoicePage>;
+  /**
+   * Approves or rejects a PENDING invoice with a single conditional UPDATE (no read-then-write),
+   * so of two concurrent decisions exactly one wins. `not_found` also for another tenant's ID
+   * or a non-UUID; `already_decided` when the invoice is no longer PENDING (left untouched).
+   * @throws ValidationError when `reason` is not a string or exceeds 1000 characters.
+   * @throws UserNotInTenantError when the deciding user does not exist in the tenant.
+   */
+  decide(id: string, input: DecideInvoiceInput): Promise<DecideInvoiceResult>;
 }
 
 export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices {
@@ -213,6 +243,36 @@ export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices
         .offset((page - 1) * pageSize);
       const [{ total }] = await db.select({ total: count() }).from(invoices).where(where);
       return { items, totalItems: total };
+    },
+
+    async decide(id, input) {
+      const { decision, reason } = parse(decideInvoiceInputSchema, { decision: input.decision, reason: input.reason });
+      if (!idSchema.safeParse(input.userId).success) throw new UserNotInTenantError(String(input.userId));
+      if (!idSchema.safeParse(id).success) return { outcome: "not_found" };
+      const rejectionReason = decision === "REJECTED" && reason || null;
+      try {
+        const [decided] = await db
+          .update(invoices)
+          .set({
+            status: decision,
+            decidedByUserId: input.userId,
+            decidedAt: sql`now()`,
+            rejectionReason,
+            updatedAt: sql`now()`,
+          })
+          .where(and(eq(invoices.id, id), eq(invoices.tenantId, tenantId), eq(invoices.status, "PENDING")))
+          .returning(getTableColumns(invoices));
+        if (decided) return { outcome: "decided", invoice: decided };
+      } catch (error) {
+        if (isForeignKeyViolation(error, DECIDER_FOREIGN_KEY)) throw new UserNotInTenantError(input.userId);
+        throw error;
+      }
+      const [existing] = await db
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.tenantId, tenantId)))
+        .limit(1);
+      return existing ? { outcome: "already_decided", invoice: existing } : { outcome: "not_found" };
     },
   };
 }

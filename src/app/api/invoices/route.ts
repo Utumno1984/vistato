@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth/session";
 import { invalidRequest } from "@/lib/http/errors";
 import { parseInvoiceListQuery, toInvoiceCollection } from "@/lib/invoices/collection";
+import { loadDeciders } from "@/lib/invoices/resource";
 import { MAX_UPLOAD_BYTES, tooLargeResponse, uploadInvoiceFile } from "@/lib/invoices/upload";
 
 /** Room for the multipart framing (boundaries, headers, other small fields) around the file. */
@@ -40,7 +41,9 @@ export async function GET(request: Request) {
   if (!parsed.ok) return invalidRequest(parsed.issues);
 
   const result = await auth.scope.invoices.list(parsed.query);
-  return Response.json(toInvoiceCollection(result, parsed.query, { userId: auth.user.id, role: auth.user.role }), {
+  const deciders = await loadDeciders(auth.scope, result.items);
+  const caller = { userId: auth.user.id, role: auth.user.role };
+  return Response.json(toInvoiceCollection(result, parsed.query, caller, deciders), {
     headers: { "Cache-Control": "no-store" },
   });
 }
