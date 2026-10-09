@@ -277,3 +277,25 @@ test("no nested interactive elements and no console errors with click, drop and 
   await expect(successText(page)).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+for (const key of ["Enter", "Space"]) {
+  test(`${key} opens the file chooser exactly once`, async ({ page }) => {
+    await setup(page);
+    const input = page.getByLabel("File XML");
+    await expect
+      .poll(() =>
+        input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
+      )
+      .toBe(true);
+    let opened = 0;
+    page.on("filechooser", () => (opened += 1));
+    await page.bringToFront();
+    await input.focus();
+    await expect(input).toBeFocused();
+    await page.keyboard.press(key);
+    await expect.poll(() => opened).toBeGreaterThanOrEqual(1);
+    // Give a possible duplicate chooser time to appear.
+    await page.waitForTimeout(500);
+    expect(opened).toBe(1);
+  });
+}
