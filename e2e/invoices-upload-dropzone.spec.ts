@@ -67,6 +67,8 @@ test("clicking the area opens the file chooser; the chosen name is shown and the
   page,
 }) => {
   await setup(page);
+  // Carica must not be clicked before hydration: the form would submit natively and reload.
+  await waitUntilReady(page.getByLabel("File XML"));
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     area(page).click(),
