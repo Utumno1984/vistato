@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { firstDroppedFile } from "@/lib/invoices/dropped-file";
@@ -32,6 +32,13 @@ export function UploadForm() {
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [fileName, setFileName] = useState("");
+  // Set once hydration is committed and effects have run: until then React only queues
+  // (and later replays) key events, so a programmatic click() would lose its user activation.
+  // Exposed as `data-ready` purely as a readiness signal for the e2e tests.
+  // Written straight on the DOM node (React does not manage this attribute): no re-render.
+  useEffect(() => {
+    inputRef.current?.setAttribute("data-ready", "true");
+  }, []);
 
   function syncName() {
     setFileName(inputRef.current?.files?.[0]?.name ?? "");

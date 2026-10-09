@@ -67,6 +67,8 @@ test("clicking the area opens the file chooser; the chosen name is shown and the
   page,
 }) => {
   await setup(page);
+  // Carica must not be clicked before hydration: the form would submit natively and reload.
+  await waitUntilReady(page.getByLabel("File XML"));
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     area(page).click(),
@@ -86,23 +88,29 @@ test("clicking the area opens the file chooser; the chosen name is shown and the
   await expect(area(page)).not.toContainText("Caffè e più.xml");
 });
 
+/**
+ * Waits for the "hydration committed and effects run" signal. A key event sent earlier is only
+ * queued by React and replayed later, without the user activation the file chooser needs.
+ */
+async function waitUntilReady(input: Locator) {
+  await expect(input).toHaveAttribute("data-ready", "true");
+}
+
 async function openWithKey(page: Page, key: string) {
   await setup(page);
+  // Subscribe to the chooser well before the key: the subscription is asynchronous on the
+  // Playwright server, and a key sent right after waitForEvent() can reach the browser before
+  // file chooser interception is on (the native dialog then opens, unseen, and the event never
+  // fires). The awaited steps below give the subscription time to settle.
+  const chooserPromise = page.waitForEvent("filechooser");
+  chooserPromise.catch(() => {});
   const input = page.getByLabel("File XML");
-  // Wait until React has hydrated the field: a re-render after focus must not steal it.
-  await expect
-    .poll(() =>
-      input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
-    )
-    .toBe(true);
+  await waitUntilReady(input);
   await page.bringToFront();
   await input.focus();
   await expect(input).toBeFocused();
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    page.keyboard.press(key),
-  ]);
-  expect(chooser).toBeTruthy();
+  await page.keyboard.press(key);
+  expect(await chooserPromise).toBeTruthy();
 }
 
 test("Tab reaches the area and Enter opens the file chooser", async ({ page }) => {
@@ -282,11 +290,7 @@ for (const key of ["Enter", "Space"]) {
   test(`${key} opens the file chooser exactly once`, async ({ page }) => {
     await setup(page);
     const input = page.getByLabel("File XML");
-    await expect
-      .poll(() =>
-        input.evaluate((el) => Object.keys(el).some((k) => k.startsWith("__reactProps$"))),
-      )
-      .toBe(true);
+    await waitUntilReady(input);
     let opened = 0;
     page.on("filechooser", () => (opened += 1));
     await page.bringToFront();
