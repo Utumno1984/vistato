@@ -43,10 +43,14 @@ comando non corrisponde al permesso `Bash(gh *)` e resta bloccato in attesa di u
 Le quote di utilizzo (5 ore e settimanale) sono il vincolo: usa il modello più leggero adatto.
 
 - Sessioni headless (`claude -p`) e orchestratore: sempre `--model sonnet`.
-- Modelli degli agenti: pianificatore e critico `opus`, sviluppatore e tester `sonnet`;
-  ogni agente ha un `maxTurns` nel frontmatter.
-- Critico: `effort: medium`; dal secondo giro verifica solo i punti segnalati e il diff delle
-  correzioni, non rifà il red team completo. Massimo 2 giri.
+- Modelli degli agenti: pianificatore e critico `opus` di default, sviluppatore e tester
+  `sonnet`; ogni agente ha un `maxTurns` nel frontmatter.
+- Critico su `sonnet`: solo per un ticket a **basso rischio**, cioè senza autenticazione,
+  isolamento tra tenant, entitlement, pagamenti o dati di fatture (es. una pagina che legge
+  dati già validati e protetti da un ticket precedente, un testo, una rifinitura di stile).
+  Chi invoca il critico decide e scrive nel ticket "critico: sonnet (basso rischio)" con il
+  motivo; in caso di dubbio resta `opus`. `effort: medium`; dal secondo giro verifica solo i
+  punti segnalati e il diff delle correzioni, non rifà il red team completo. Massimo 2 giri.
 
 Lavori piccoli e mirati (una correzione di testo, una domanda sul codice) non richiedono la
 pipeline completa: chiedi a Daniele se in dubbio.
