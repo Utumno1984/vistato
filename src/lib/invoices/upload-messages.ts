@@ -2,6 +2,8 @@
  * Maps the answer of `POST /api/invoices` to what the upload form shows: the single place
  * where API error codes become Italian messages.
  */
+/** Same as the server's limit (5 MB), kept here so the browser bundle does not pull in the parser. */
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const UPLOAD_SUCCESS_MESSAGE = "Fattura caricata";
 export const UPLOAD_NO_FILE_MESSAGE = "Seleziona un file XML";
 export const UPLOAD_FALLBACK_MESSAGE = "Caricamento non riuscito, riprova";

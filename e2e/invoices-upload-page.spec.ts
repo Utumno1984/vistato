@@ -18,7 +18,9 @@ const xmlFile = (xml: string, name = "fattura.xml") => ({
   mimeType: "application/xml",
   buffer: Buffer.from(xml, "utf8"),
 });
-const rows = (page: Page) => page.locator("tbody tr");
+// Scoped to the form: Next adds its own role="alert" route announcer.
+const alertOf = (page: Page) => page.getByRole("region", { name: "Carica fattura" }).getByRole("alert");
+const rows =(page: Page) => page.locator("tbody tr");
 const chooseAndSend = async (page: Page, file: ReturnType<typeof xmlFile>) => {
   await page.getByLabel("File XML").setInputFiles(file);
   await page.getByRole("button", { name: "Carica" }).click();
@@ -63,7 +65,7 @@ test("an invalid XML shows the Italian validation messages and adds no row", asy
   await setup(page);
   await page.goto("/fatture");
   await chooseAndSend(page, xmlFile(buildInvoiceXml({ date: "2024-13-45" })));
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(alertOf(page)).toContainText(
     "La data della fattura non è valida",
   );
   await expect(page.getByText("Fattura caricata")).toHaveCount(0);
@@ -79,7 +81,7 @@ test("a duplicate shows Questa fattura è già stata caricata", async ({
   await chooseAndSend(page, file);
   await expect(page.getByText("Fattura caricata")).toBeVisible();
   await chooseAndSend(page, file);
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(alertOf(page)).toHaveText(
     "Questa fattura è già stata caricata",
   );
   await expect(rows(page)).toHaveCount(1);
@@ -93,16 +95,16 @@ test("a .p7m, a non-xml file and a file over 5 MB show specific messages and add
   const xml = buildInvoiceXml();
 
   await chooseAndSend(page, xmlFile(xml, "fattura.xml.p7m"));
-  await expect(page.getByRole("alert")).toContainText(".p7m");
+  await expect(alertOf(page)).toContainText(".p7m");
   await chooseAndSend(page, xmlFile(xml, "fattura.pdf"));
-  await expect(page.getByRole("alert")).toContainText("solo file XML");
+  await expect(alertOf(page)).toContainText("solo file XML");
 
   const big = xmlFile(
     `${xml}<!--${"x".repeat(5 * 1024 * 1024 + 10)}-->`,
     "grande.xml",
   );
   await chooseAndSend(page, big);
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(alertOf(page)).toHaveText(
     "Il file supera la dimensione massima di 5 MB",
   );
   await expect(rows(page)).toHaveCount(0);
@@ -112,7 +114,7 @@ test("sending without a file shows Seleziona un file XML", async ({ page }) => {
   await setup(page);
   await page.goto("/fatture");
   await page.getByRole("button", { name: "Carica" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Seleziona un file XML");
+  await expect(alertOf(page)).toHaveText("Seleziona un file XML");
   await expect(rows(page)).toHaveCount(0);
 });
 
@@ -178,6 +180,6 @@ test("no console errors after a successful and a failed upload", async ({
   await chooseAndSend(page, xmlFile(buildInvoiceXml()));
   await expect(page.getByText("Fattura caricata")).toBeVisible();
   await chooseAndSend(page, xmlFile(buildInvoiceXml({ date: "nope" })));
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(alertOf(page)).toBeVisible();
   expect(problems).toEqual([]);
 });

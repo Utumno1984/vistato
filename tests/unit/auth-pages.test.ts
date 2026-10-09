@@ -68,6 +68,14 @@ describe("proxy", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 
+  it("lets a Server Action POST without the cookie through (the action answers unauthenticated itself)", () => {
+    const action = new NextRequest("http://localhost:3100/fatture", { method: "POST", headers: { "next-action": "abc" } });
+    expect(proxy(action).status).toBe(200);
+    // A GET carrying the header is still a page request.
+    const get = new NextRequest("http://localhost:3100/fatture", { headers: { "next-action": "abc" } });
+    expect(proxy(get).status).toBe(307);
+  });
+
   it("matches only /fatture and below: not /, /login, /api", () => {
     expect(config.matcher).toEqual(["/fatture", "/fatture/:path*"]);
   });

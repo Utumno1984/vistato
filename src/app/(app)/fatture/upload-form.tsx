@@ -5,15 +5,19 @@ import { useRef, useState, type FormEvent } from "react";
 
 import {
   describeUploadResponse,
+  MAX_UPLOAD_BYTES,
   UPLOAD_FALLBACK_MESSAGE,
 } from "@/lib/invoices/upload-messages";
 
+import { uploadInvoiceAction } from "./actions";
+
 /**
- * "Carica fattura": sends the chosen XML to the `upload-invoice` link of the collection
- * (same endpoint, checks and session as the API). The file is checked by the server, so
+ * "Carica fattura": sends the chosen XML to a Server Action that runs the same service as
+ * `POST /api/invoices` (same checks, session and tenant). The page renders this form only
+ * when the collection has the `upload-invoice` link. The file is checked by the server, so
  * the form has no HTML5 `required`.
  */
-export function UploadForm({ href }: { href: string }) {
+export function UploadForm() {
   const router = useRouter();
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
@@ -33,9 +37,11 @@ export function UploadForm({ href }: { href: string }) {
     const body = new FormData();
     if (file instanceof File && file.name !== "") body.append("file", file);
     try {
-      const res = await fetch(href, { method: "POST", body });
-      const json: unknown = await res.json().catch(() => null);
-      const outcome = describeUploadResponse(res.status, json);
+      // A file past the limit is not sent: the server would refuse it with the same message.
+      const outcome =
+        file instanceof File && file.size > MAX_UPLOAD_BYTES
+          ? describeUploadResponse(413, { error: "payload_too_large" })
+          : await uploadInvoiceAction(body);
       if (outcome.kind === "unauthenticated") {
         window.location.assign("/login?next=%2Ffatture");
         return;
