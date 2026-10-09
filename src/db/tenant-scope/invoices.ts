@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client";
@@ -96,6 +96,21 @@ export type CreateInvoiceInput = z.input<typeof createInvoiceInputSchema>;
 
 const idSchema = z.uuid();
 
+/** Input of `invoices.list`: an optional status filter and a 1-based page. */
+export const listInvoicesInputSchema = z.object({
+  status: z.enum(invoiceStatus.enumValues).optional(),
+  page: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  pageSize: z.number().int().min(1).max(100),
+});
+
+export type ListInvoicesInput = z.input<typeof listInvoicesInputSchema>;
+
+export interface InvoicePage {
+  items: Invoice[];
+  /** All the invoices of the tenant matching the filter, not only this page. */
+  totalItems: number;
+}
+
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw ValidationError.fromZod(parsed.error);
@@ -118,6 +133,12 @@ export interface TenantInvoices {
   findByBusinessKey(
     key: Pick<CreateInvoiceInput, "supplierVatCountry" | "supplierVatCode" | "invoiceNumber" | "invoiceDate">,
   ): Promise<Invoice | null>;
+  /**
+   * One page of the tenant's invoices (newest upload first, ties broken by `id`) and the total
+   * count for the same filter. Offset pagination: an invoice uploaded between two reads can shift items.
+   * @throws ValidationError when `page` or `pageSize` is out of range or `status` is unknown.
+   */
+  list(input: ListInvoicesInput): Promise<InvoicePage>;
 }
 
 export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices {
@@ -178,6 +199,20 @@ export function tenantInvoices(db: Database, tenantId: TenantId): TenantInvoices
         )
         .limit(1);
       return invoice ?? null;
+    },
+
+    async list(input) {
+      const { status, page, pageSize } = parse(listInvoicesInputSchema, input);
+      const where = and(eq(invoices.tenantId, tenantId), status ? eq(invoices.status, status) : undefined);
+      const items = await db
+        .select()
+        .from(invoices)
+        .where(where)
+        .orderBy(desc(invoices.createdAt), desc(invoices.id))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+      const [{ total }] = await db.select({ total: count() }).from(invoices).where(where);
+      return { items, totalItems: total };
     },
   };
 }

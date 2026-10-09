@@ -92,7 +92,7 @@ describe("POST /api/invoices", () => {
       uploadedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
       decidedAt: null,
       rejectionReason: null,
-      _links: { self: { href: `/api/invoices/${body.id}` } },
+      _links: { self: { href: `/api/invoices/${body.id}` }, collection: { href: "/api/invoices" } },
     });
     const again = await get(tokenA, body.id);
     expect(again.status).toBe(200);

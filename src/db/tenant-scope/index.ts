@@ -43,7 +43,9 @@ export {
   INVOICE_TEXT_MAX_RAW_LENGTH,
   type CreateInvoiceInput,
   type Invoice,
+  type InvoicePage,
   type InvoiceStatus,
+  type ListInvoicesInput,
   type TenantInvoices,
 } from "./invoices";
 

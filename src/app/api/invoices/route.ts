@@ -2,6 +2,7 @@ import { DuplicateInvoiceError, ValidationError } from "@/db/errors";
 import { requireSession } from "@/lib/auth/session";
 import { MAX_FATTURAPA_BYTES, parseFatturaPA } from "@/lib/fatturapa/parse";
 import { errorResponse, invalidRequest } from "@/lib/http/errors";
+import { parseInvoiceListQuery, toInvoiceCollection } from "@/lib/invoices/collection";
 import { toInvoiceResource } from "@/lib/invoices/resource";
 
 /** Largest accepted file (5 MB). The parser enforces the same limit on the bytes it receives. */
@@ -32,6 +33,23 @@ async function readLimitedBody(request: Request): Promise<Uint8Array | null> {
     chunks.push(value);
   }
   return new Uint8Array(Buffer.concat(chunks));
+}
+
+/**
+ * The caller's tenant invoices, newest upload first, as a paginated HAL collection.
+ * Query: `status` (PENDING, APPROVED, REJECTED; empty means all), `page` (from 1), `pageSize` (1-100, default 20).
+ */
+export async function GET(request: Request) {
+  const auth = await requireSession(request);
+  if (auth instanceof Response) return auth;
+
+  const parsed = parseInvoiceListQuery(new URL(request.url).searchParams);
+  if (!parsed.ok) return invalidRequest(parsed.issues);
+
+  const result = await auth.scope.invoices.list(parsed.query);
+  return Response.json(toInvoiceCollection(result, parsed.query, { userId: auth.user.id, role: auth.user.role }), {
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 /**

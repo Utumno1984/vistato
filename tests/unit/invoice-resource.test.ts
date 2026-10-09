@@ -40,7 +40,7 @@ describe("toInvoiceResource", () => {
       uploadedAt: "2025-03-01T10:00:00.000Z",
       decidedAt: null,
       rejectionReason: null,
-      _links: { self: { href: `/api/invoices/${invoice.id}` } },
+      _links: { self: { href: `/api/invoices/${invoice.id}` }, collection: { href: "/api/invoices" } },
     });
   });
 });
