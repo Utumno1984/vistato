@@ -2,6 +2,10 @@
 
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 const subscribeNothing = () => () => {};
 const UNAVAILABLE = "Servizio non disponibile, riprova tra poco.";
 
@@ -42,7 +46,7 @@ export function LoginForm({ next }: { next: string }) {
     busy.current = false;
   }
 
-  const field = "mt-1 block w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700";
+  const field = "h-10 px-3 py-2";
   return (
     <form method="post" onSubmit={submit} className="flex flex-col gap-4" aria-busy={pending}>
       {error ? (
@@ -50,9 +54,10 @@ export function LoginForm({ next }: { next: string }) {
           {error}
         </p>
       ) : null}
-      <label className="text-sm font-medium">
-        Email
-        <input
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="login-email">Email</Label>
+        <Input
+          id="login-email"
           name="email"
           type="email"
           autoComplete="username"
@@ -61,10 +66,11 @@ export function LoginForm({ next }: { next: string }) {
           onChange={(event) => setEmail(event.target.value)}
           className={field}
         />
-      </label>
-      <label className="text-sm font-medium">
-        Password
-        <input
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="login-password">Password</Label>
+        <Input
+          id="login-password"
           name="password"
           type="password"
           autoComplete="current-password"
@@ -73,14 +79,10 @@ export function LoginForm({ next }: { next: string }) {
           onChange={(event) => setPassword(event.target.value)}
           className={field}
         />
-      </label>
-      <button
-        type="submit"
-        disabled={!ready || pending}
-        className="rounded-md bg-zinc-900 px-4 py-2 font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
-      >
+      </div>
+      <Button type="submit" disabled={!ready || pending}>
         Accedi
-      </button>
+      </Button>
     </form>
   );
 }

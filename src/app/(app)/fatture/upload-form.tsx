@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
 
+import { Button } from "@/components/ui/button";
 import { firstDroppedFile } from "@/lib/invoices/dropped-file";
 import {
   describeUploadResponse,
@@ -172,13 +173,9 @@ export function UploadForm() {
         >
           Scarica un esempio
         </a>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
-        >
+        <Button type="submit" variant="outline" disabled={pending}>
           Carica
-        </button>
+        </Button>
       </form>
       {result ? (
         <div
