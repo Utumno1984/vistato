@@ -74,14 +74,14 @@ test("the status filter changes the URL, narrows the table and highlights the ac
   const filter = page.getByRole("navigation", { name: "Filtro per stato" });
   await expect(filter.getByRole("link")).toHaveText(["Tutte", "Da approvare", "Approvate", "Rifiutate"]);
   await expect(rows(page)).toHaveCount(4);
-  await expect(filter.getByRole("link", { name: "Tutte" })).toHaveAttribute("aria-current", "true");
+  await expect(filter.getByRole("link", { name: "Tutte" })).toHaveAttribute("aria-current", "page");
 
   await filter.getByRole("link", { name: "Approvate" }).click();
   await expect(page).toHaveURL(/\/fatture\?status=APPROVED$/);
   await expect(rows(page)).toHaveCount(2);
   await expect(rows(page).filter({ hasText: "Approvata" })).toHaveCount(2);
-  await expect(filter.getByRole("link", { name: "Approvate" })).toHaveAttribute("aria-current", "true");
-  await expect(filter.getByRole("link", { name: "Tutte" })).not.toHaveAttribute("aria-current", "true");
+  await expect(filter.getByRole("link", { name: "Approvate" })).toHaveAttribute("aria-current", "page");
+  await expect(filter.getByRole("link", { name: "Tutte" })).not.toHaveAttribute("aria-current");
 
   await filter.getByRole("link", { name: "Rifiutate" }).click();
   await expect(page).toHaveURL(/status=REJECTED$/);
@@ -178,6 +178,35 @@ test("invalid status and page values fall back to the defaults without errors", 
   // A valid value next to an invalid one is kept.
   await page.goto("/fatture?status=APPROVED&page=abc");
   await expect(rows(page)).toHaveCount(1);
+});
+
+test("a page past the last of an empty tenant shows no 'Pagina X di 0'", async ({ page }) => {
+  const tenant = await newTenant();
+  await login(page, tenant);
+  await page.goto("/fatture?page=3");
+  await expect(page.getByText("Nessuna fattura")).toBeVisible();
+  await expect(page.getByText(/Pagina/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Precedente" })).toBeVisible();
+});
+
+test("only the active filter has aria-current=page", async ({ page }) => {
+  const tenant = await newTenant();
+  seedInvoices(tenant, manyInvoices(1));
+  await login(page, tenant);
+  await page.goto("/fatture?status=REJECTED");
+  const filter = page.getByRole("navigation", { name: "Filtro per stato" });
+  await expect(filter.locator("[aria-current]")).toHaveCount(1);
+  await expect(filter.getByRole("link", { name: "Rifiutate" })).toHaveAttribute("aria-current", "page");
+});
+
+test("the invoice number links to the detail page", async ({ page }) => {
+  const tenant = await newTenant();
+  seedInvoices(tenant, [{ supplierName: "Linkata Srl", number: "LNK-1", date: "2026-03-05", amountCents: 100 }]);
+  await login(page, tenant);
+  await page.goto("/fatture");
+  await rows(page).getByRole("link", { name: "LNK-1" }).click();
+  await expect(page).toHaveURL(/\/fatture\/[0-9a-f-]{36}$/);
+  await expect(page.getByText("Linkata Srl")).toBeVisible();
 });
 
 test("an anonymous visitor is sent to /login keeping the query in next", async ({ page }) => {
