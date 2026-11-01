@@ -173,7 +173,14 @@ const FORBIDDEN_CJS: [string, string, string][] = [
 
 describe("tenant isolation lint rules", () => {
   it("know which schema exports are tenant-owned tables", () => {
-    expect(tenantTables.sort()).toEqual(["invoices", "sessions", "tenantModules", "users"]);
+    expect(tenantTables.sort()).toEqual([
+      "ficConnections",
+      "ficOauthStates",
+      "invoices",
+      "sessions",
+      "tenantModules",
+      "users",
+    ]);
   });
 
   describe.each(APP_FILES)("in %s", (filePath) => {

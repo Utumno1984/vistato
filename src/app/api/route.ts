@@ -1,10 +1,18 @@
 import { getRequestSession } from "@/lib/auth/session";
+import { forTenant } from "@/db/tenant-scope";
+import { FIC_INTEGRATION_LINK } from "@/lib/fic-connection/resource";
+import { ficIbanAlertAccess } from "@/lib/fic-iban-alert/access";
 import { buildLinks, resource } from "@/lib/hateoas";
 import { INVOICES_COLLECTION_LINK, UPLOAD_INVOICE_LINK } from "@/lib/invoices/resource";
 
 /** API entry point: clients discover everything else from these links. */
 export async function GET(request: Request) {
-  const authenticated = (await getRequestSession(request)) !== null;
+  const session = await getRequestSession(request);
+  const authenticated = session !== null;
+  // Same rule as the endpoints of the add-on (`requireFicIbanAlert(..., "read")`).
+  const canReadFic = session
+    ? (await ficIbanAlertAccess({ user: session.user, scope: forTenant(session.tenant.id) })).canRead
+    : false;
   return Response.json(
     resource(
       { name: "vistato", version: process.env.npm_package_version ?? "0.1.0" },
@@ -15,6 +23,7 @@ export async function GET(request: Request) {
         { rel: "me", link: { href: "/api/me", title: "Utente corrente" }, allowed: authenticated },
         { rel: "invoices", link: INVOICES_COLLECTION_LINK, allowed: authenticated },
         { rel: "upload-invoice", link: UPLOAD_INVOICE_LINK, allowed: authenticated },
+        { rel: "fic-integration", link: FIC_INTEGRATION_LINK, allowed: canReadFic },
         { rel: "logout", link: { href: "/api/auth/logout", method: "POST", title: "Esci" }, allowed: authenticated },
       ]),
     ),
