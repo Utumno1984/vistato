@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   FIC_DEFAULT_MAX_REQUESTS,
@@ -157,5 +157,23 @@ describe("SlidingWindowRateLimiter", () => {
     expect(() => new SlidingWindowRateLimiter({ windowMs: -1 })).toThrow(RangeError);
     expect(() => new SlidingWindowRateLimiter({ windowMs: Number.POSITIVE_INFINITY })).toThrow(RangeError);
     await expect(new SlidingWindowRateLimiter().acquire("")).rejects.toThrow(TypeError);
+  });
+});
+
+describe("SlidingWindowRateLimiter default clock", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is not stalled by the wall clock moving backwards", async () => {
+    const rl = new SlidingWindowRateLimiter({ maxRequests: 1, windowMs: 50 });
+    await rl.acquire("1");
+    // The system clock jumps back one hour (NTP, manual change).
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() - 3_600_000);
+    const outcome = await Promise.race([
+      rl.acquire("1").then(() => "granted"),
+      new Promise((resolve) => setTimeout(() => resolve("stalled"), 2000)),
+    ]);
+    expect(outcome).toBe("granted");
   });
 });

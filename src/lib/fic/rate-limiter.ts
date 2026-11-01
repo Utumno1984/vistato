@@ -18,6 +18,9 @@ export const FIC_DEFAULT_WINDOW_MS = 5 * 60 * 1000;
 export type Sleep = (ms: number) => Promise<void>;
 export type Clock = () => number;
 
+/** Monotonic milliseconds (never go backwards), unlike `Date.now`. */
+export const monotonicNow: Clock = () => performance.now();
+
 export const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface RateLimiterOptions {
@@ -25,7 +28,10 @@ export interface RateLimiterOptions {
   maxRequests?: number;
   /** Window length in milliseconds. Default {@link FIC_DEFAULT_WINDOW_MS}. */
   windowMs?: number;
-  /** Current time in ms (injectable for tests). Default `Date.now`. */
+  /**
+   * Current time in ms (injectable for tests). Default {@link monotonicNow}: a wall clock
+   * moved backwards (NTP, manual change) must not stall a company for the jump.
+   */
   now?: Clock;
   /** Waits the given ms (injectable for tests). Default `setTimeout`. */
   sleep?: Sleep;
@@ -64,7 +70,7 @@ export class SlidingWindowRateLimiter {
     }
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
-    this.now = options.now ?? Date.now;
+    this.now = options.now ?? monotonicNow;
     this.sleep = options.sleep ?? realSleep;
     this.lastSweep = this.now();
   }
