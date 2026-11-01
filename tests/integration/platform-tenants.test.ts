@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { closeDb } from "@/db/client";
 import { DuplicateVatNumberError, TenantNotFoundError, ValidationError } from "@/db/errors";
-import { createTenant, setTenantStatus, type CreateTenantInput } from "@/db/platform/tenants";
+import { createTenant, findTenantById, setTenantStatus, type CreateTenantInput } from "@/db/platform/tenants";
 import { tenants } from "@/db/schema";
 
 import { testDb, testSql } from "../helpers/db";
@@ -394,6 +394,20 @@ describe("setTenantStatus", () => {
     );
     expect(error.fields).toEqual(["status"]);
     expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe("findTenantById", () => {
+  it("returns the tenant whatever its status, or null for an unknown UUID", async () => {
+    const tenant = await create({ businessName: "Acme S.r.l.", vatNumber: "12345678903" });
+    await setTenantStatus(tenant.id, "SUSPENDED", testDb());
+    expect(await findTenantById(tenant.id, testDb())).toMatchObject({ id: tenant.id, status: "SUSPENDED" });
+    expect(await findTenantById("6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b", testDb())).toBeNull();
+  });
+
+  it("throws ValidationError for an ID that is not a UUID, before any query", async () => {
+    const error = await expectError(findTenantById("not-a-uuid", testDb()), ValidationError);
+    expect(error.fields).toEqual(["tenantId"]);
   });
 });
 

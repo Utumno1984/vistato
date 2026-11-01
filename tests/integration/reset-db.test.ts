@@ -25,10 +25,11 @@ describe("cleanup between integration tests", () => {
       insert into tenant_modules (tenant_id, module_id, status, activated_at)
       select ${tenant.id}, id, 'ACTIVE', now() from modules where code = 'approvals'`;
 
-    expect(await counts()).toEqual({ tenants: 1, users: 1, tenant_modules: 1, modules: 4 });
+    // modules: 5 since ticket #56 (fic_iban_alert added to the catalogue).
+    expect(await counts()).toEqual({ tenants: 1, users: 1, tenant_modules: 1, modules: 5 });
   });
 
   it("the next test starts with empty tenant tables and the full module catalogue", async () => {
-    expect(await counts()).toEqual({ tenants: 0, users: 0, tenant_modules: 0, modules: 4 });
+    expect(await counts()).toEqual({ tenants: 0, users: 0, tenant_modules: 0, modules: 5 });
   });
 });
