@@ -85,6 +85,19 @@ export async function createTenant(input: CreateTenantInput, db: Database = getD
   }
 }
 
+const tenantIdArgSchema = z.uuid("ID del tenant non valido");
+
+/**
+ * The tenant with this ID (any status), or null when none exists.
+ * @throws ValidationError when the ID is not a UUID, before any query.
+ */
+export async function findTenantById(tenantId: string, db: Database = getDb()): Promise<Tenant | null> {
+  const parsed = tenantIdArgSchema.safeParse(tenantId);
+  if (!parsed.success) throw new ValidationError([{ field: "tenantId", message: "ID del tenant non valido" }]);
+  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, parsed.data)).limit(1);
+  return tenant ?? null;
+}
+
 /**
  * Sets the status of a tenant (any status to any status: no transition rules).
  * `updated_at` always moves forward, even for two updates within the same instant.

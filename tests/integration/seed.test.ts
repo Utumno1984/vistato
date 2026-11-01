@@ -32,15 +32,38 @@ describe("module catalogue seed", () => {
     await seedModules(testDb());
   });
 
+  // Name kept for the test guard: since ticket #56 the catalogue has 5 modules (fic_iban_alert added).
   it("is idempotent: two runs leave exactly the 4 catalogue modules", async () => {
     await seedModules(testDb());
     await seedModules(testDb());
 
     const rows = await catalogRows();
     expect(rows.map((r) => r.code).sort()).toEqual(
-      ["approvals", "cost_centers", "payment_schedule", "purchase_orders"].sort(),
+      ["approvals", "cost_centers", "fic_iban_alert", "payment_schedule", "purchase_orders"].sort(),
     );
     expect(rows.filter((r) => r.isBase).map((r) => r.code)).toEqual(["approvals"]);
+  });
+
+  it("is idempotent with 5 modules: adds fic_iban_alert as paid and leaves the existing modules unchanged", async () => {
+    // A database seeded before ticket #56: the 4 original modules only.
+    await testDb().delete(modules).where(eq(modules.code, "fic_iban_alert"));
+    const before = await testDb().select().from(modules).orderBy(modules.code);
+    expect(before.map((r) => r.code)).toEqual(["approvals", "cost_centers", "payment_schedule", "purchase_orders"]);
+
+    await seedModules(testDb());
+    await seedModules(testDb());
+
+    const after = await testDb().select().from(modules).orderBy(modules.code);
+    expect(after).toHaveLength(5);
+    const existing = after.filter((r) => r.code !== "fic_iban_alert");
+    // Same id, code, name, description and is_base (only updated_at is refreshed by the upsert).
+    const stable = (r: (typeof before)[number]) => ({ ...r, updatedAt: undefined });
+    expect(existing.map(stable)).toEqual(before.map(stable));
+    expect(after.find((r) => r.code === "fic_iban_alert")).toMatchObject({
+      name: "Alert cambio IBAN fornitori (Fatture in Cloud)",
+      description: MODULE_CATALOG.find((m) => m.code === "fic_iban_alert")!.description,
+      isBase: false,
+    });
   });
 
   it("resets name, description and is_base edited by hand to the values in code", async () => {

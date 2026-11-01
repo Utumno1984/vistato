@@ -28,6 +28,12 @@ export const MODULE_CATALOG = [
     description: "Scadenzario dei pagamenti delle fatture approvate.",
     isBase: false,
   },
+  {
+    code: "fic_iban_alert",
+    name: "Alert cambio IBAN fornitori (Fatture in Cloud)",
+    description: "Avviso quando l'IBAN di un fornitore cambia rispetto a quello già noto su Fatture in Cloud.",
+    isBase: false,
+  },
 ] as const;
 
 export type ModuleCode = (typeof MODULE_CATALOG)[number]["code"];

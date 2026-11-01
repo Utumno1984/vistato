@@ -40,7 +40,8 @@ describe("npm run db:seed (scripts/seed.ts)", () => {
     const result = run();
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("DEMO_USER_PASSWORD is not set");
-    expect(await count("modules")).toBe(4);
+    // 5 since ticket #56 (fic_iban_alert added to the catalogue).
+    expect(await count("modules")).toBe(5);
     expect(await count("tenants")).toBe(0);
     expect(await count("users")).toBe(0);
   });
