@@ -42,10 +42,20 @@ export const ficOauthStates = pgTable(
 );
 
 /**
+ * Why a link went to `reauthorization_required` (`last_refresh_error`):
+ * - `refresh_rejected`: FiC refused the refresh token (`invalid_grant`, 400/401);
+ * - `save_failed`: FiC renewed the tokens but saving them failed (the old refresh token may
+ *   already be invalid, so the link cannot be trusted any more).
+ */
+export const FIC_REFRESH_ERRORS = ["refresh_rejected", "save_failed"] as const;
+
+/**
  * The link of a tenant to its Fatture in Cloud company: at most one per tenant, and a FiC
  * company is linked to at most one tenant (unique `fic_company_id`; NULL, allowed many times,
  * while the user has still to choose among several companies). Tokens are encrypted with the
- * tenant as AAD (purposes `fic_access_token` / `fic_refresh_token`) and never leave the data layer.
+ * tenant as AAD (purposes `fic_access_token` / `fic_refresh_token`); they are NULL, together
+ * with their expiry, exactly in `reauthorization_required`. Unlinking deletes the row: no
+ * history with or without secrets is kept, so the company is free for another tenant at once.
  */
 export const ficConnections = pgTable(
   "fic_connections",
@@ -59,15 +69,19 @@ export const ficConnections = pgTable(
     companyName: text("company_name"),
     /** `[{ id, name }]` of the FiC user's companies, only while waiting for the choice (validated with Zod). */
     availableCompanies: jsonb("available_companies"),
-    accessTokenEnc: text("access_token_enc").notNull(),
-    refreshTokenEnc: text("refresh_token_enc").notNull(),
-    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }).notNull(),
+    /** NULL only in `reauthorization_required` (check `fic_connections_tokens_by_status`). */
+    accessTokenEnc: text("access_token_enc"),
+    refreshTokenEnc: text("refresh_token_enc"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
     /** The OAuth scopes granted, space-separated (as sent to FiC). */
     scopes: text("scopes").notNull(),
     /** The user whose FiC authorization produced the tokens. */
     connectedByUserId: uuid("connected_by_user_id").notNull(),
     /** When the link became `connected` (NULL while waiting for the choice of the company). */
     connectedAt: timestamp("connected_at", { withTimezone: true }),
+    /** When and why the tokens were dropped (set together with `reauthorization_required`). */
+    lastRefreshErrorAt: timestamp("last_refresh_error_at", { withTimezone: true }),
+    lastRefreshError: text("last_refresh_error", { enum: FIC_REFRESH_ERRORS }),
   },
   (table) => [
     unique("fic_connections_tenant_id_unique").on(table.tenantId),
@@ -86,6 +100,20 @@ export const ficConnections = pgTable(
     check(
       "fic_connections_pending_has_choices",
       sql`${table.status} <> 'pending_company_selection' OR (${table.ficCompanyId} IS NULL AND ${table.companyName} IS NULL AND ${table.connectedAt} IS NULL AND jsonb_typeof(${table.availableCompanies}) = 'array')`,
+    ),
+    // `::text`: a new enum value cannot be used in the transaction that adds it (the migrations run in one).
+    check(
+      "fic_connections_tokens_by_status",
+      sql`CASE WHEN ${table.status}::text = 'reauthorization_required'
+        THEN ${table.accessTokenEnc} IS NULL AND ${table.refreshTokenEnc} IS NULL AND ${table.accessTokenExpiresAt} IS NULL
+          AND ${table.ficCompanyId} IS NOT NULL AND ${table.companyName} IS NOT NULL AND ${table.availableCompanies} IS NULL
+          AND ${table.lastRefreshErrorAt} IS NOT NULL AND ${table.lastRefreshError} IS NOT NULL
+        ELSE ${table.accessTokenEnc} IS NOT NULL AND ${table.refreshTokenEnc} IS NOT NULL AND ${table.accessTokenExpiresAt} IS NOT NULL
+        END`,
+    ),
+    check(
+      "fic_connections_last_refresh_error_valid",
+      sql`(${table.lastRefreshError} IS NULL) = (${table.lastRefreshErrorAt} IS NULL) AND (${table.lastRefreshError} IS NULL OR ${table.lastRefreshError} IN ('refresh_rejected', 'save_failed'))`,
     ),
   ],
 );

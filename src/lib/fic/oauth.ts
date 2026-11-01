@@ -2,19 +2,27 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
+import type { z } from "zod";
+
 import { isJsonContentType, LOOPBACK_HOSTS, readBody } from "./client";
 import {
   FicConfigError,
-  FicHttpError,
   FicInvalidArgumentError,
   FicInvalidResponseError,
   FicNetworkError,
+  FicOAuthHttpError,
   FicServerError,
   FicTimeoutError,
   FIC_BODY_EXCERPT_MAX_BYTES,
   redactExcerpt,
 } from "./errors";
-import { type FicOAuthTokens, oauthTokenResponseSchema } from "./schemas";
+import {
+  FIC_OAUTH_TOKEN_MAX_LENGTH,
+  type FicOAuthRefreshedTokens,
+  type FicOAuthTokens,
+  oauthRefreshResponseSchema,
+  oauthTokenResponseSchema,
+} from "./schemas";
 
 /**
  * OAuth2 Authorization Code + PKCE (S256) towards Fatture in Cloud: configuration, the
@@ -50,6 +58,12 @@ export interface FicOAuthConfig {
   redirectUri: string;
   authorizeUrl: string;
   tokenUrl: string;
+  /**
+   * RFC 7009 revocation endpoint, used when a tenant unlinks its account. Optional: FiC does
+   * not document one (to be confirmed by the spike, #57), so revocation is attempted only
+   * when `FIC_OAUTH_REVOKE_URL` is set.
+   */
+  revokeUrl?: string;
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -90,18 +104,21 @@ function readUrl(env: Env, name: string, fallback: string | null): string {
 }
 
 /**
- * Reads `FIC_CLIENT_ID`, `FIC_CLIENT_SECRET`, `FIC_REDIRECT_URI` (required) and
- * `FIC_OAUTH_AUTHORIZE_URL`, `FIC_OAUTH_TOKEN_URL` (default the real FiC endpoints).
+ * Reads `FIC_CLIENT_ID`, `FIC_CLIENT_SECRET`, `FIC_REDIRECT_URI` (required),
+ * `FIC_OAUTH_AUTHORIZE_URL`, `FIC_OAUTH_TOKEN_URL` (default the real FiC endpoints) and
+ * `FIC_OAUTH_REVOKE_URL` (optional, no default: `revokeUrl` is absent when it is not set).
  * @throws FicConfigError naming the variable (never its value).
  */
 export function readFicOAuthConfig(env: Env = process.env): FicOAuthConfig {
-  return {
+  const config: FicOAuthConfig = {
     clientId: readRequired(env, "FIC_CLIENT_ID"),
     clientSecret: readRequired(env, "FIC_CLIENT_SECRET"),
     redirectUri: readUrl(env, "FIC_REDIRECT_URI", null),
     authorizeUrl: readUrl(env, "FIC_OAUTH_AUTHORIZE_URL", FIC_DEFAULT_OAUTH_AUTHORIZE_URL),
     tokenUrl: readUrl(env, "FIC_OAUTH_TOKEN_URL", FIC_DEFAULT_OAUTH_TOKEN_URL),
   };
+  if (env.FIC_OAUTH_REVOKE_URL?.trim()) config.revokeUrl = readUrl(env, "FIC_OAUTH_REVOKE_URL", null);
+  return config;
 }
 
 /** 32 random bytes in base64url (256 bits, 43 characters). */
@@ -160,32 +177,52 @@ export interface ExchangeCodeOptions {
 
 const TIMEOUT = Symbol("fic-oauth-timeout");
 
-/** Every secret of the exchange redacted from a FiC response body (longest first). */
+/** Every secret of the request redacted from a FiC response body (longest first). */
 function redactAll(text: string, secrets: readonly string[]): string {
   let excerpt = text;
   for (const secret of [...secrets].sort((a, b) => b.length - a.length)) excerpt = redactExcerpt(excerpt, secret);
   return excerpt;
 }
 
+/** The RFC 6749 `error` code of an OAuth error body, when it is a plausible short code. */
+function oauthErrorCode(body: Uint8Array): string | undefined {
+  try {
+    const json: unknown = JSON.parse(new TextDecoder().decode(body));
+    const code = (json as { error?: unknown } | null)?.error;
+    return typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface OAuthPost {
+  url: string;
+  /** JSON (the token endpoint of FiC) or form (RFC 7009 revocation). */
+  encoding: "json" | "form";
+  fields: Record<string, string>;
+  /** Every secret in `fields`: redacted from any excerpt of the response. */
+  secrets: readonly string[];
+}
+
+interface OAuthPostResult {
+  status: number;
+  headers: Headers;
+  body: Uint8Array;
+  tooLarge: boolean;
+  path: string;
+  details: { method: "POST"; path: string; attempts: 1 };
+}
+
 /**
- * Exchanges an authorization code for the tokens (`grant_type=authorization_code`, with the
- * PKCE verifier), as a JSON POST to the token URL. Never retried: a code is single use.
- * Redirects are not followed. A 2xx body is validated with Zod, nothing partial is returned.
- * @throws FicInvalidArgumentError for a code that cannot be sent (nothing is sent).
- * @throws FicHttpError (4xx), FicServerError (5xx), FicInvalidResponseError (2xx not valid),
- *   FicNetworkError, FicTimeoutError: none of them carries a secret.
+ * One POST to an OAuth endpoint of FiC: no retry (a code, and a refresh token that FiC
+ * rotates, are single use), no redirect followed, timeout on the whole response.
+ * @throws FicServerError (5xx), FicOAuthHttpError (3xx, 4xx), FicNetworkError, FicTimeoutError.
  */
-export async function exchangeAuthorizationCode(
-  config: FicOAuthConfig,
-  params: { code: string; codeVerifier: string },
-  options: ExchangeCodeOptions = {},
-): Promise<FicOAuthTokens> {
-  if (!isPlausibleAuthorizationCode(params.code)) throw new FicInvalidArgumentError("Authorization code malformed");
+async function postOAuth(request: OAuthPost, options: ExchangeCodeOptions): Promise<OAuthPostResult> {
   const doFetch = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? FIC_OAUTH_TIMEOUT_MS;
-  const path = new URL(config.tokenUrl).pathname;
-  const secrets = [config.clientSecret, params.code, params.codeVerifier];
-  const details = { method: "POST" as const, path, attempts: 1 };
+  const path = new URL(request.url).pathname;
+  const details = { method: "POST" as const, path, attempts: 1 as const };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(TIMEOUT), timeoutMs);
@@ -194,17 +231,13 @@ export async function exchangeAuthorizationCode(
   let body: Uint8Array;
   let tooLarge: boolean;
   try {
-    const response = await doFetch(config.tokenUrl, {
+    const response = await doFetch(request.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        redirect_uri: config.redirectUri,
-        code: params.code,
-        code_verifier: params.codeVerifier,
-      }),
+      headers: {
+        "Content-Type": request.encoding === "json" ? "application/json" : "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: request.encoding === "json" ? JSON.stringify(request.fields) : new URLSearchParams(request.fields).toString(),
       redirect: "manual",
       signal: controller.signal,
       cache: "no-store",
@@ -225,23 +258,29 @@ export async function exchangeAuthorizationCode(
     clearTimeout(timer);
   }
 
-  const bodyExcerpt = redactAll(new TextDecoder().decode(body), secrets);
-  const label = `FiC POST ${path} answered ${status}`;
-  if (status >= 500 && status < 600) throw new FicServerError(label, { ...details, status, bodyExcerpt });
-  if (status < 200 || status >= 300) throw new FicHttpError(label, { ...details, status, bodyExcerpt });
+  if (status < 200 || status >= 300) {
+    const bodyExcerpt = redactAll(new TextDecoder().decode(body), request.secrets);
+    const label = `FiC POST ${path} answered ${status}`;
+    if (status >= 500 && status < 600) throw new FicServerError(label, { ...details, status, bodyExcerpt });
+    throw new FicOAuthHttpError(label, { ...details, status, bodyExcerpt, oauthError: oauthErrorCode(body) });
+  }
+  return { status, headers, body, tooLarge, path, details };
+}
 
+/** Validates a 2xx token response; a body holding tokens is never kept in an error, not even redacted. */
+function parseTokenResponse<S extends z.ZodType>(result: OAuthPostResult, schema: S): z.output<S> {
+  const { path, details, status } = result;
   const fail = (reason: string) =>
     new FicInvalidResponseError(`FiC POST ${path}: ${reason}`, { ...details, status, bodyExcerpt: "[REDACTED]" });
-  // A 2xx body holds the tokens: it is never kept in an error, not even redacted.
-  if (tooLarge) throw fail(`response body larger than ${FIC_OAUTH_MAX_RESPONSE_BYTES} bytes`);
-  if (!isJsonContentType(headers.get("content-type"))) throw fail("response is not JSON (Content-Type)");
+  if (result.tooLarge) throw fail(`response body larger than ${FIC_OAUTH_MAX_RESPONSE_BYTES} bytes`);
+  if (!isJsonContentType(result.headers.get("content-type"))) throw fail("response is not JSON (Content-Type)");
   let json: unknown;
   try {
-    json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+    json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(result.body));
   } catch {
     throw fail("response body is not valid JSON");
   }
-  const parsed = oauthTokenResponseSchema.safeParse(json);
+  const parsed = schema.safeParse(json);
   if (!parsed.success) {
     const where = parsed.error.issues
       .slice(0, 5)
@@ -250,4 +289,107 @@ export async function exchangeAuthorizationCode(
     throw fail(`response does not match the expected schema at ${where}`);
   }
   return parsed.data;
+}
+
+/**
+ * Exchanges an authorization code for the tokens (`grant_type=authorization_code`, with the
+ * PKCE verifier), as a JSON POST to the token URL. Never retried: a code is single use.
+ * Redirects are not followed. A 2xx body is validated with Zod, nothing partial is returned.
+ * @throws FicInvalidArgumentError for a code that cannot be sent (nothing is sent).
+ * @throws FicHttpError (4xx, as FicOAuthHttpError), FicServerError (5xx), FicInvalidResponseError
+ *   (2xx not valid), FicNetworkError, FicTimeoutError: none of them carries a secret.
+ */
+export async function exchangeAuthorizationCode(
+  config: FicOAuthConfig,
+  params: { code: string; codeVerifier: string },
+  options: ExchangeCodeOptions = {},
+): Promise<FicOAuthTokens> {
+  if (!isPlausibleAuthorizationCode(params.code)) throw new FicInvalidArgumentError("Authorization code malformed");
+  const result = await postOAuth(
+    {
+      url: config.tokenUrl,
+      encoding: "json",
+      fields: {
+        grant_type: "authorization_code",
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: config.redirectUri,
+        code: params.code,
+        code_verifier: params.codeVerifier,
+      },
+      secrets: [config.clientSecret, params.code, params.codeVerifier],
+    },
+    options,
+  );
+  return parseTokenResponse(result, oauthTokenResponseSchema);
+}
+
+/** A token as stored by Vistato: visible ASCII, bounded (anything else is never sent). */
+function isSendableToken(token: unknown): token is string {
+  return typeof token === "string" && token.length <= FIC_OAUTH_TOKEN_MAX_LENGTH && /^[\x21-\x7e]+$/.test(token);
+}
+
+/**
+ * Renews the access token (`grant_type=refresh_token`), as a JSON POST to the token URL like
+ * the code exchange. Never retried: FiC may rotate the refresh token, so a lost answer must
+ * not be followed by a second use of the old one. `refreshToken` of the result is null when
+ * FiC did not send a new one (the old one stays valid).
+ * @throws FicInvalidArgumentError for a token that cannot be sent (nothing is sent).
+ * @throws FicOAuthHttpError (4xx, with `oauthError` e.g. `invalid_grant`), FicServerError,
+ *   FicInvalidResponseError, FicNetworkError, FicTimeoutError: none carries a secret.
+ */
+export async function refreshAccessToken(
+  config: FicOAuthConfig,
+  params: { refreshToken: string },
+  options: ExchangeCodeOptions = {},
+): Promise<FicOAuthRefreshedTokens> {
+  if (!isSendableToken(params.refreshToken)) throw new FicInvalidArgumentError("Refresh token malformed");
+  const result = await postOAuth(
+    {
+      url: config.tokenUrl,
+      encoding: "json",
+      fields: {
+        grant_type: "refresh_token",
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        refresh_token: params.refreshToken,
+      },
+      secrets: [config.clientSecret, params.refreshToken],
+    },
+    options,
+  );
+  return parseTokenResponse(result, oauthRefreshResponseSchema);
+}
+
+/** Timeout of a revocation: it runs while the user waits for the unlink, and its outcome does not matter. */
+export const FIC_OAUTH_REVOKE_TIMEOUT_MS = 5_000;
+
+/**
+ * Asks FiC to revoke a token (RFC 7009: form POST with `token`, `token_type_hint` and the
+ * client credentials) at `config.revokeUrl`. Resolves on any 2xx; the body is ignored.
+ * @throws FicConfigError when no revocation endpoint is configured (nothing is sent).
+ * @throws FicInvalidArgumentError, FicOAuthHttpError, FicServerError, FicNetworkError,
+ *   FicTimeoutError: none carries a secret.
+ */
+export async function revokeToken(
+  config: FicOAuthConfig,
+  params: { token: string; hint: "access_token" | "refresh_token" },
+  options: ExchangeCodeOptions = {},
+): Promise<void> {
+  if (!config.revokeUrl) throw new FicConfigError("FIC_OAUTH_REVOKE_URL is not set");
+  if (!isSendableToken(params.token)) throw new FicInvalidArgumentError("Token malformed");
+  await postOAuth(
+    {
+      url: config.revokeUrl,
+      encoding: "form",
+      fields: {
+        token: params.token,
+        token_type_hint: params.hint,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+      },
+      secrets: [config.clientSecret, params.token],
+    },
+    { timeoutMs: FIC_OAUTH_REVOKE_TIMEOUT_MS, ...options },
+  );
 }

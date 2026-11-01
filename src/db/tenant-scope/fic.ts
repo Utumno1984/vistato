@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
 
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { and, eq, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/db/client";
-import { isForeignKeyViolation, isUniqueViolation, UserNotInTenantError, ValidationError } from "@/db/errors";
-import { ficConnections, ficOauthStates, type FicConnectionRow } from "@/db/schema";
+import {
+  isForeignKeyViolation,
+  isLockNotAvailable,
+  isUniqueViolation,
+  LockTimeoutError,
+  UserNotInTenantError,
+  ValidationError,
+} from "@/db/errors";
+import { FIC_REFRESH_ERRORS, ficConnections, ficOauthStates, type FicConnectionRow } from "@/db/schema";
 
 import type { TenantId } from "./tenant-id";
 
@@ -14,10 +21,12 @@ import type { TenantId } from "./tenant-id";
  * and the connection itself (`fic_connections`). Every statement filters on (or sets)
  * `tenant_id`.
  *
- * Secrets arrive here already encrypted (`*Enc`, see `src/lib/fic-connection/store.ts`, which
- * encrypts with this scope's tenant as AAD): the data layer cannot import the `server-only`
- * secret box, since scripts and e2e helpers load it outside Next. The encrypted tokens are
- * written here and never returned to application code.
+ * Secrets arrive here already encrypted (`*Enc`; `src/lib/fic-connection/service.ts` and
+ * `src/lib/fic/access-token.ts` encrypt with this scope's tenant as AAD): the data layer cannot
+ * import the `server-only` secret box, since scripts and e2e helpers load it outside Next.
+ * `get()` never returns a token, encrypted or not; the encrypted tokens come out only of
+ * `readTokens`, `withTokenLock` and `disconnect`, for the code that decrypts them for this
+ * tenant (access token renewal, revocation on unlink).
  */
 
 const TENANT_UNIQUE = "fic_connections_tenant_id_unique";
@@ -35,6 +44,13 @@ const ENCRYPTED_MAX_LENGTH = 16 * 1024;
 const STATE_MAX_LENGTH = 8 * 1024;
 
 export type FicConnectionStatus = FicConnectionRow["status"];
+export type FicRefreshError = (typeof FIC_REFRESH_ERRORS)[number];
+
+/**
+ * Longest wait for the lock of the tenant's connection row (another request renewing the token
+ * holds it for at most the FiC timeout): past it the caller gets a `LockTimeoutError`.
+ */
+export const FIC_TOKEN_LOCK_TIMEOUT_MS = 30_000;
 
 /** A FiC company the user can link (`id` is the FiC company id). */
 export interface FicCompanyChoice {
@@ -64,12 +80,52 @@ export interface FicConnection {
   /** Only in `pending_company_selection`; null otherwise. */
   availableCompanies: FicCompanyChoice[] | null;
   scopes: string;
-  accessTokenExpiresAt: Date;
+  /** Null exactly in `reauthorization_required` (no token any more). */
+  accessTokenExpiresAt: Date | null;
   connectedByUserId: string;
   connectedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * The encrypted tokens of the tenant's connection (AAD = this tenant), for the code that
+ * renews or revokes them. Never part of an API resource.
+ */
+export interface FicStoredTokens {
+  connectionId: string;
+  status: FicConnectionStatus;
+  companyId: number | null;
+  /** Null in `reauthorization_required`. */
+  accessTokenEnc: string | null;
+  refreshTokenEnc: string | null;
+  accessTokenExpiresAt: Date | null;
+}
+
+/** The tenant's connection row, locked (`SELECT ... FOR UPDATE`) until the callback ends. */
+export interface FicTokenLock {
+  /** The row as read under the lock; null when the tenant has no connection. */
+  readonly tokens: FicStoredTokens | null;
+  /**
+   * Saves the renewed tokens of the locked `connected` row. `refreshTokenEnc` absent (FiC did
+   * not rotate it): the stored refresh token stays. Clears any previous refresh error.
+   * @throws ValidationError for an invalid input; Error when the locked row is not `connected`.
+   */
+  saveRefreshedTokens(input: SaveRefreshedTokensInput): Promise<void>;
+  /**
+   * The locked `connected` row goes to `reauthorization_required`: tokens and expiry deleted,
+   * error and instant recorded. False when the row is not `connected` (nothing changes).
+   */
+  requireReauthorization(error: FicRefreshError, at: Date): Promise<boolean>;
+}
+
+export type DisconnectFicResult =
+  | { outcome: "not_connected" }
+  /** The row is deleted; its last encrypted tokens are returned for the revocation (null in `reauthorization_required`). */
+  | {
+      outcome: "disconnected";
+      previous: Pick<FicStoredTokens, "status" | "companyId" | "accessTokenEnc" | "refreshTokenEnc">;
+    };
 
 const encryptedSchema = z.string().min(1).max(ENCRYPTED_MAX_LENGTH);
 const validDate = z.date().refine((d) => !Number.isNaN(d.getTime()), "Data non valida");
@@ -88,9 +144,26 @@ export const createFicConnectionInputSchema = z.object({
 
 export type CreateFicConnectionInput = z.input<typeof createFicConnectionInputSchema>;
 
+export const saveRefreshedTokensInputSchema = z.object({
+  /** Encrypted for this tenant, purpose `fic_access_token`. */
+  accessTokenEnc: encryptedSchema,
+  /** Encrypted for this tenant, purpose `fic_refresh_token`; absent when FiC did not rotate it. */
+  refreshTokenEnc: encryptedSchema.optional(),
+  accessTokenExpiresAt: validDate,
+});
+
+export type SaveRefreshedTokensInput = z.input<typeof saveRefreshedTokensInputSchema>;
+
+/** The encrypted values read before a renewal, compared again before dropping them. */
+export interface FicTokensSnapshot {
+  connectionId: string;
+  accessTokenEnc: string;
+  refreshTokenEnc: string;
+}
+
 export type CreateFicConnectionResult =
   | { outcome: "created"; connection: FicConnection }
-  /** The tenant already has a connection (any status): nothing changed. */
+  /** The tenant already has a connection (`connected` or pending): nothing changed. */
   | { outcome: "already_connected" }
   /** The only company is linked to another tenant: nothing was saved (the tokens are discarded). */
   | { outcome: "company_already_linked" };
@@ -111,7 +184,9 @@ export interface TenantFicConnection {
    * Saves the link at the end of the OAuth callback: `connected` to the company when
    * `companies` has exactly one distinct entry, otherwise `pending_company_selection` with
    * the choices. The uniqueness of the tenant and of the company is enforced by the database
-   * (concurrent callbacks or tenants: one wins, the others save nothing).
+   * (concurrent callbacks or tenants: one wins, the others save nothing). A connection in
+   * `reauthorization_required` (no token) is replaced, in the same transaction: when the new
+   * link fails (e.g. the company belongs to another tenant) the old row stays as it was.
    * @throws ValidationError for an invalid input (nothing is saved).
    * @throws UserNotInTenantError when `connectedByUserId` is not a user of the tenant.
    */
@@ -122,6 +197,29 @@ export interface TenantFicConnection {
    * connection: its tokens are discarded and the tenant is back to "not connected".
    */
   selectCompany(companyId: number, at?: Date): Promise<SelectFicCompanyResult>;
+  /** The encrypted tokens without any lock (fast path of the renewal), or null. */
+  readTokens(): Promise<FicStoredTokens | null>;
+  /**
+   * Runs `fn` in a transaction holding the lock of the tenant's connection row (`SELECT ...
+   * FOR UPDATE`, filtered on the tenant): of concurrent renewals of the same tenant, in any
+   * process, one runs at a time and the next ones see what the previous one saved. An unlink
+   * (`disconnect`) waits for it too. The transaction commits when `fn` resolves and rolls back
+   * when it throws. `fn` must use only the lock's operations (it holds a pooled connection).
+   * @throws LockTimeoutError when the lock is not obtained within {@link FIC_TOKEN_LOCK_TIMEOUT_MS}.
+   */
+  withTokenLock<T>(fn: (lock: FicTokenLock) => Promise<T>): Promise<T>;
+  /**
+   * Outside any lock: `connected` → `reauthorization_required` (tokens deleted), only if the
+   * row still holds exactly the encrypted tokens of `expected` (nobody renewed or unlinked it
+   * meanwhile). For a renewal whose save failed. Returns whether the row changed.
+   */
+  requireReauthorizationIfUnchanged(expected: FicTokensSnapshot, error: FicRefreshError, at: Date): Promise<boolean>;
+  /**
+   * Unlinks the tenant: deletes its connection row, whatever its status (waiting for a renewal
+   * in progress to commit), and returns the last encrypted tokens for their revocation. The
+   * company is then free for another tenant. Other tenants' rows are never touched.
+   */
+  disconnect(): Promise<DisconnectFicResult>;
 }
 
 /** A consumed authorization request. */
@@ -192,6 +290,31 @@ function toConnection(row: FicConnectionRow): FicConnection {
   };
 }
 
+function toStoredTokens(row: FicConnectionRow): FicStoredTokens {
+  return {
+    connectionId: row.id,
+    status: row.status,
+    companyId: row.ficCompanyId,
+    accessTokenEnc: row.accessTokenEnc,
+    refreshTokenEnc: row.refreshTokenEnc,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+  };
+}
+
+const refreshErrorSchema = z.enum(FIC_REFRESH_ERRORS);
+
+/** The columns written when a `connected` row loses its tokens for good. */
+function reauthorizationValues(error: FicRefreshError, at: Date) {
+  return {
+    status: "reauthorization_required" as const,
+    accessTokenEnc: null,
+    refreshTokenEnc: null,
+    accessTokenExpiresAt: null,
+    lastRefreshError: parse(refreshErrorSchema, error),
+    lastRefreshErrorAt: parse(validDate, at),
+  };
+}
+
 /** Distinct companies by id (the first occurrence wins), in the order received. */
 function distinctCompanies(companies: readonly FicCompanyChoice[]): FicCompanyChoice[] {
   const byId = new Map<number, FicCompanyChoice>();
@@ -213,7 +336,12 @@ export function tenantFicConnection(db: Database, tenantId: TenantId): TenantFic
       const choices = distinctCompanies(parsed.companies);
       const single = choices.length === 1 ? choices[0] : null;
       try {
-        const [row] = await db
+        const row = await db.transaction(async (tx) => {
+          // A link to redo: replaced by the new one, atomically (a failed insert keeps it).
+          await tx
+            .delete(ficConnections)
+            .where(and(inTenant, eq(ficConnections.status, "reauthorization_required")));
+          const [inserted] = await tx
           .insert(ficConnections)
           .values({
             tenantId,
@@ -239,6 +367,8 @@ export function tenantFicConnection(db: Database, tenantId: TenantId): TenantFic
                 }),
           })
           .returning();
+          return inserted;
+        });
         return { outcome: "created", connection: toConnection(row) };
       } catch (error) {
         if (isUniqueViolation(error, TENANT_UNIQUE)) return { outcome: "already_connected" };
@@ -279,6 +409,84 @@ export function tenantFicConnection(db: Database, tenantId: TenantId): TenantFic
         await db.delete(ficConnections).where(pendingRow);
         return { outcome: "company_already_linked" };
       }
+    },
+
+    async readTokens() {
+      const [row] = await db.select().from(ficConnections).where(inTenant).limit(1);
+      return row ? toStoredTokens(row) : null;
+    },
+
+    async withTokenLock(fn) {
+      try {
+        return await db.transaction(async (tx) => {
+          // Bounded wait for a renewal in progress elsewhere (SET LOCAL takes no parameter).
+          await tx.execute(sql.raw(`SET LOCAL lock_timeout = '${FIC_TOKEN_LOCK_TIMEOUT_MS}ms'`));
+          const [row] = await tx.select().from(ficConnections).where(inTenant).limit(1).for("update");
+          const tokens = row ? toStoredTokens(row) : null;
+          const lockedConnected = row
+            ? and(inTenant, eq(ficConnections.id, row.id), eq(ficConnections.status, "connected"))
+            : undefined;
+
+          const lock: FicTokenLock = {
+            tokens,
+            async saveRefreshedTokens(input) {
+              const parsed = parse(saveRefreshedTokensInputSchema, input);
+              if (!lockedConnected) throw new Error("No connection to save the renewed tokens to");
+              const updated = await tx
+                .update(ficConnections)
+                .set({
+                  accessTokenEnc: parsed.accessTokenEnc,
+                  ...(parsed.refreshTokenEnc !== undefined ? { refreshTokenEnc: parsed.refreshTokenEnc } : {}),
+                  accessTokenExpiresAt: parsed.accessTokenExpiresAt,
+                  lastRefreshError: null,
+                  lastRefreshErrorAt: null,
+                })
+                .where(lockedConnected)
+                .returning({ id: ficConnections.id });
+              if (updated.length !== 1) throw new Error("The locked connection is not connected");
+            },
+            async requireReauthorization(error, at) {
+              if (!lockedConnected) return false;
+              const updated = await tx
+                .update(ficConnections)
+                .set(reauthorizationValues(error, at))
+                .where(lockedConnected)
+                .returning({ id: ficConnections.id });
+              return updated.length === 1;
+            },
+          };
+          return fn(Object.freeze(lock));
+        });
+      } catch (error) {
+        if (isLockNotAvailable(error)) throw new LockTimeoutError();
+        throw error;
+      }
+    },
+
+    async requireReauthorizationIfUnchanged(expected, error, at) {
+      const updated = await db
+        .update(ficConnections)
+        .set(reauthorizationValues(error, at))
+        .where(
+          and(
+            inTenant,
+            eq(ficConnections.id, expected.connectionId),
+            eq(ficConnections.status, "connected"),
+            eq(ficConnections.accessTokenEnc, expected.accessTokenEnc),
+            eq(ficConnections.refreshTokenEnc, expected.refreshTokenEnc),
+          ),
+        )
+        .returning({ id: ficConnections.id });
+      return updated.length === 1;
+    },
+
+    async disconnect() {
+      // A plain DELETE waits for the row lock of a renewal in progress and then deletes (and
+      // returns) the row as that renewal left it: the latest tokens are the ones revoked.
+      const [row] = await db.delete(ficConnections).where(inTenant).returning();
+      if (!row) return { outcome: "not_connected" };
+      const { status, companyId, accessTokenEnc, refreshTokenEnc } = toStoredTokens(row);
+      return { outcome: "disconnected", previous: { status, companyId, accessTokenEnc, refreshTokenEnc } };
     },
   };
 }

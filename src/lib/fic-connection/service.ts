@@ -5,7 +5,8 @@ import type { FicConnection, TenantScope } from "@/db/tenant-scope";
 import { FIC_MAX_AVAILABLE_COMPANIES } from "@/db/tenant-scope";
 import { decryptSecret, encryptSecret, SecretBoxConfigError } from "@/lib/crypto/secret-box";
 import { listCompanies as defaultListCompanies } from "@/lib/fic/client";
-import { FicConfigError, FicError } from "@/lib/fic/errors";
+import { FicConfigError, FicError, FicOAuthHttpError } from "@/lib/fic/errors";
+import { logFicEvent, type FicLogger } from "@/lib/fic/log";
 import {
   buildAuthorizationUrl,
   createOAuthState,
@@ -16,10 +17,12 @@ import {
   type FicOAuthConfig,
   isPlausibleAuthorizationCode,
   readFicOAuthConfig,
+  revokeToken,
 } from "@/lib/fic/oauth";
 import type { FicCompany } from "@/lib/fic/schemas";
 
 import type { FicCallbackOutcome } from "./outcomes";
+import { blocksNewLink } from "./resource";
 
 /**
  * Linking a tenant to its Fatture in Cloud company (OAuth2 Authorization Code + PKCE).
@@ -80,14 +83,15 @@ export type StartFicConnectionResult = { authorizationUrl: string } | { error: "
 /**
  * Starts the authorization: a new random `state` (256 bits) and PKCE pair, stored for the
  * caller (hash of the state, verifier encrypted), valid 10 minutes. Refused when the tenant
- * already has a connection, complete or waiting for the choice of the company.
+ * already has a connection, complete or waiting for the choice of the company (allowed in
+ * `reauthorization_required`, to link the account again).
  * @throws FicNotConfiguredError when the OAuth variables or the encryption key are missing.
  */
 export async function startFicConnection(
   caller: FicConnectionCaller,
   deps: FicConnectionDeps = {},
 ): Promise<StartFicConnectionResult> {
-  if (await caller.scope.ficConnection.get()) return { error: "already_connected" };
+  if (blocksNewLink(await caller.scope.ficConnection.get())) return { error: "already_connected" };
   const oauth = config(deps);
   const now = (deps.now ?? (() => new Date()))();
   const state = createOAuthState();
@@ -137,7 +141,7 @@ export async function completeFicConnection(
 
   if (query.has("error")) return single(query, "error") === "access_denied" ? "access_denied" : "authorization_failed";
 
-  if (await caller.scope.ficConnection.get()) return "already_connected";
+  if (blocksNewLink(await caller.scope.ficConnection.get())) return "already_connected";
 
   const code = single(query, "code");
   if (!isPlausibleAuthorizationCode(code)) return "token_exchange_failed";
@@ -188,7 +192,8 @@ export async function completeFicConnection(
       connectedByUserId: caller.user.id,
       at: now,
     });
-    if (result.outcome === "created") return result.connection.status;
+    // A new link is never created in reauthorization_required.
+    if (result.outcome === "created") return result.connection.status === "connected" ? "connected" : "pending_company_selection";
     return result.outcome;
   } catch (error) {
     if (error instanceof ValidationError) return "companies_failed";
@@ -201,6 +206,97 @@ export async function completeFicConnection(
 export type SelectFicCompanyOutcome =
   | { outcome: "connected"; connection: FicConnection }
   | { outcome: "not_pending" | "unknown_company" | "company_already_linked" };
+
+export type FicRevocationOutcome =
+  /** FiC accepted the revocation of every stored token. */
+  | "revoked"
+  /** At least one revocation failed or a token was unreadable (logged, without the token). */
+  | "failed"
+  /** Nothing to revoke (no token left) or no revocation endpoint configured. */
+  | "skipped";
+
+export type DisconnectFicOutcome = { outcome: "not_connected" } | { outcome: "disconnected"; revocation: FicRevocationOutcome };
+
+export interface FicDisconnectDeps {
+  /** OAuth configuration (revocation endpoint and client); default from the environment. */
+  config?: FicOAuthConfig;
+  /** `fetch` of the revocation. */
+  fetch?: typeof fetch;
+  log?: FicLogger;
+}
+
+/** Best effort: asks FiC to revoke the tokens of an unlinked connection. Never throws. */
+async function revokeQuietly(
+  caller: FicConnectionCaller,
+  previous: { accessTokenEnc: string | null; refreshTokenEnc: string | null },
+  deps: FicDisconnectDeps,
+  log: FicLogger,
+): Promise<FicRevocationOutcome> {
+  const tenantId = caller.scope.tenantId;
+  const stored = (
+    [
+      ["refresh_token", previous.refreshTokenEnc],
+      ["access_token", previous.accessTokenEnc],
+    ] as const
+  ).filter((entry): entry is readonly ["refresh_token" | "access_token", string] => entry[1] !== null);
+  if (stored.length === 0) return "skipped";
+
+  let oauth: FicOAuthConfig;
+  try {
+    oauth = deps.config ?? readFicOAuthConfig();
+  } catch (error) {
+    log({ level: "warn", event: "fic_revocation_skipped", tenantId, error: error instanceof Error ? error.name : "unknown" });
+    return "skipped";
+  }
+  if (!oauth.revokeUrl) return "skipped";
+
+  const results = await Promise.allSettled(
+    stored.map(async ([hint, encrypted]) => {
+      const purpose = hint === "refresh_token" ? "fic_refresh_token" : "fic_access_token";
+      const token = decryptSecret(encrypted, { tenantId, purpose }).plaintext;
+      await revokeToken(oauth, { token, hint }, { fetch: deps.fetch });
+    }),
+  );
+  let outcome: FicRevocationOutcome = "revoked";
+  for (const result of results) {
+    if (result.status === "fulfilled") continue;
+    outcome = "failed";
+    const error: unknown = result.reason;
+    log({
+      level: "warn",
+      event: "fic_revocation_failed",
+      tenantId,
+      error: error instanceof Error ? error.name : "unknown",
+      httpStatus: error instanceof FicError ? error.status : undefined,
+      oauthError: error instanceof FicOAuthHttpError ? error.oauthError : undefined,
+    });
+  }
+  return outcome;
+}
+
+/**
+ * Unlinks the tenant's FiC account, whatever the state of the link (connected, waiting for the
+ * choice of the company, to be authorized again): the connection row is deleted with its
+ * tokens and company id (no history is kept), waiting for a renewal in progress to finish.
+ * Then, best effort, the last tokens are revoked on FiC when a revocation endpoint is
+ * configured: its outcome is logged (never a token) and does not change the result.
+ */
+export async function disconnectFic(caller: FicConnectionCaller, deps: FicDisconnectDeps = {}): Promise<DisconnectFicOutcome> {
+  const log = deps.log ?? logFicEvent;
+  const result = await caller.scope.ficConnection.disconnect();
+  if (result.outcome === "not_connected") return result;
+  const revocation = await revokeQuietly(caller, result.previous, deps, log);
+  log({
+    level: "info",
+    event: "fic_disconnected",
+    tenantId: caller.scope.tenantId,
+    userId: caller.user.id,
+    companyId: result.previous.companyId,
+    status: result.previous.status,
+    revocation,
+  });
+  return { outcome: "disconnected", revocation };
+}
 
 /** Chooses the company of a `pending_company_selection` connection among its saved ones. */
 export async function selectFicCompany(

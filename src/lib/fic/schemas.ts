@@ -92,3 +92,29 @@ export const oauthTokenResponseSchema = z
       expiresInSeconds: body.expires_in,
     }),
   );
+
+export interface FicOAuthRefreshedTokens {
+  accessToken: string;
+  /** The new refresh token when FiC rotates it; null when FiC keeps the old one valid. */
+  refreshToken: string | null;
+  expiresInSeconds: number;
+}
+
+/**
+ * `POST /oauth/token` (refresh token grant): same as above, but `refresh_token` may be missing
+ * (or null): FiC does not have to rotate it, and then the old one stays in use.
+ */
+export const oauthRefreshResponseSchema = z
+  .object({
+    token_type: z.string().refine((value) => value.toLowerCase() === "bearer", { message: "must be bearer" }),
+    access_token: ficOauthTokenSchema,
+    refresh_token: ficOauthTokenSchema.nullish(),
+    expires_in: z.number().int().positive().max(FIC_OAUTH_MAX_EXPIRES_IN_SECONDS),
+  })
+  .transform(
+    (body): FicOAuthRefreshedTokens => ({
+      accessToken: body.access_token,
+      refreshToken: body.refresh_token ?? null,
+      expiresInSeconds: body.expires_in,
+    }),
+  );

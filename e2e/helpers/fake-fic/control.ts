@@ -1,4 +1,4 @@
-import type { FakeFicCalls, FakeFicScenario } from "./server";
+import type { FakeFicCalls, FakeFicScenario, FakeFicTokenCalls } from "./server";
 
 /**
  * Settings of the fake Fatture in Cloud of the e2e suite, shared by `playwright.config.ts`
@@ -22,6 +22,13 @@ export async function configureFakeFic(state: string, scenario: FakeFicScenario,
     body: JSON.stringify(scenario),
   });
   if (!res.ok) throw new Error(`fake FiC: scenario not accepted (${res.status})`);
+}
+
+/** The refresh and revocation requests the fake received for the authorization with this `state`. */
+export async function fakeFicTokenCalls(state: string, baseUrl = FAKE_FIC_URL): Promise<FakeFicTokenCalls> {
+  const res = await fetch(`${baseUrl}/__fake/token-calls/${encodeURIComponent(state)}`);
+  if (!res.ok) throw new Error(`fake FiC: token calls not available (${res.status})`);
+  return (await res.json()) as FakeFicTokenCalls;
 }
 
 /** The calls the fake received for the authorization request with this `state`. */
