@@ -108,7 +108,7 @@ export interface FicClient {
 }
 
 /** Hosts for which a plain `http:` base URL is accepted. */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * Validates and normalises a base URL: https (http only for loopback hosts), no credentials, no query or fragment,
@@ -226,7 +226,8 @@ function serializeBody(method: FicHttpMethod, body: unknown): string | undefined
   return json;
 }
 
-function isJsonContentType(value: string | null): boolean {
+/** `application/json` or any `application/*+json` media type. */
+export function isJsonContentType(value: string | null): boolean {
   if (!value) return false;
   const mediaType = value.split(";")[0].trim().toLowerCase();
   return mediaType === "application/json" || /^application\/[a-z0-9.+-]+\+json$/.test(mediaType);
@@ -241,7 +242,7 @@ interface RawResponse {
 }
 
 /** Reads at most `limit` bytes, then cancels the rest of the stream. */
-async function readBody(response: Response, limit: number): Promise<{ body: Uint8Array; tooLarge: boolean }> {
+export async function readBody(response: Response, limit: number): Promise<{ body: Uint8Array; tooLarge: boolean }> {
   if (!response.body) return { body: new Uint8Array(), tooLarge: false };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

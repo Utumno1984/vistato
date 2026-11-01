@@ -54,3 +54,41 @@ export const companyInfoResponseSchema = z
     }),
   })
   .transform(({ data }): FicCompanyInfo => ({ companyId: data.company_id, name: data.name }));
+
+/** Longest token accepted from FiC (anti-abuse; the secret box handles up to 8 KB). */
+export const FIC_OAUTH_TOKEN_MAX_LENGTH = 4096;
+/** Longest access token lifetime accepted (10 years): a larger value is not credible. */
+const FIC_OAUTH_MAX_EXPIRES_IN_SECONDS = 10 * 365 * 24 * 60 * 60;
+
+/** A token as it may travel in an `Authorization` header: visible ASCII only, bounded. */
+const ficOauthTokenSchema = z
+  .string()
+  .min(1)
+  .max(FIC_OAUTH_TOKEN_MAX_LENGTH)
+  .regex(/^[\x21-\x7e]+$/, "must be visible ASCII");
+
+export interface FicOAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  /** Lifetime of the access token, in seconds from the response. */
+  expiresInSeconds: number;
+}
+
+/**
+ * `POST /oauth/token` (authorization code grant) →
+ * `{ token_type: "bearer", access_token, refresh_token, expires_in }`.
+ */
+export const oauthTokenResponseSchema = z
+  .object({
+    token_type: z.string().refine((value) => value.toLowerCase() === "bearer", { message: "must be bearer" }),
+    access_token: ficOauthTokenSchema,
+    refresh_token: ficOauthTokenSchema,
+    expires_in: z.number().int().positive().max(FIC_OAUTH_MAX_EXPIRES_IN_SECONDS),
+  })
+  .transform(
+    (body): FicOAuthTokens => ({
+      accessToken: body.access_token,
+      refreshToken: body.refresh_token,
+      expiresInSeconds: body.expires_in,
+    }),
+  );

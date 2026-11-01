@@ -92,7 +92,8 @@ describe("generated columns", () => {
     const rows = await testSql()`
       select table_name, column_name, data_type from information_schema.columns
       where table_schema = 'public' and column_name in ('created_at', 'updated_at')`;
-    expect(rows).toHaveLength(12); // 6 tables: tenants, users, modules, tenant_modules, sessions, invoices
+    // 8 tables: tenants, users, modules, tenant_modules, sessions, invoices, fic_oauth_states, fic_connections
+    expect(rows).toHaveLength(16);
     for (const row of rows) expect(row.data_type).toBe("timestamp with time zone");
   });
 
@@ -229,9 +230,17 @@ describe("foreign keys", () => {
       from pg_constraint
       where contype = 'f' and connamespace = 'public'::regnamespace
       order by conname`;
-    // The only exception is sessions -> users, which is ON DELETE CASCADE ('c') on purpose:
-    // deleting a user deletes its sessions.
+    // The only exceptions are sessions -> users and fic_oauth_states -> users, ON DELETE
+    // CASCADE ('c') on purpose: deleting a user deletes its sessions and pending FiC authorizations.
     expect(rows).toEqual([
+      {
+        conname: "fic_connections_connected_by_user_id_tenant_id_users_fk",
+        table_name: "fic_connections",
+        confdeltype: "r",
+      },
+      { conname: "fic_connections_tenant_id_tenants_id_fk", table_name: "fic_connections", confdeltype: "r" },
+      { conname: "fic_oauth_states_tenant_id_tenants_id_fk", table_name: "fic_oauth_states", confdeltype: "r" },
+      { conname: "fic_oauth_states_user_id_tenant_id_users_fk", table_name: "fic_oauth_states", confdeltype: "c" },
       { conname: "invoices_decided_by_user_id_tenant_id_users_fk", table_name: "invoices", confdeltype: "r" },
       { conname: "invoices_tenant_id_tenants_id_fk", table_name: "invoices", confdeltype: "r" },
       { conname: "invoices_uploaded_by_user_id_tenant_id_users_fk", table_name: "invoices", confdeltype: "r" },

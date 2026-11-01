@@ -87,6 +87,20 @@ export function findTest(source: string, name: string): "found" | "disabled" | "
   return result;
 }
 
+/**
+ * `findTest` on a file of the repository, memoised per file and name: the test files do not
+ * change during the run, and some checks below run `checkMatrix` once per source file
+ * (performance only: same result as reading and searching every time).
+ */
+const findTestCache = new Map<string, Map<string, ReturnType<typeof findTest>>>();
+function cachedFindTest(path: string, name: string): ReturnType<typeof findTest> {
+  let byName = findTestCache.get(path);
+  if (!byName) findTestCache.set(path, (byName = new Map()));
+  let status = byName.get(name);
+  if (status === undefined) byName.set(name, (status = findTest(readFileSync(path, "utf8"), name)));
+  return status;
+}
+
 /** Returns one message per problem found in the matrix; empty when it is sound. */
 function checkMatrix(
   markdown: string,
@@ -121,7 +135,7 @@ function checkMatrix(
       if (!existsSync(path)) {
         problems.push(`Test file ${file} (row "${feature}") does not exist`);
       } else {
-        const status = override?.(file, name) ?? findTest(readFileSync(path, "utf8"), name);
+        const status = override?.(file, name) ?? cachedFindTest(path, name);
         if (status === "missing") {
           problems.push(`Test "${name}" (row "${feature}") not found in ${file}`);
         } else if (status === "disabled") {

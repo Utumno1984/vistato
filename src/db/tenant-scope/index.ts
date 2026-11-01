@@ -22,6 +22,12 @@ import { ValidationError } from "@/db/errors";
 import type { ModuleCode } from "@/db/catalog/modules";
 import { hasModule } from "@/db/entitlements";
 
+import {
+  tenantFicConnection,
+  tenantFicOauthStates,
+  type TenantFicConnection,
+  type TenantFicOauthStates,
+} from "./fic";
 import { tenantModuleOperations, type TenantModules } from "./modules";
 import type { TenantId } from "./tenant-id";
 import { tenantInvoices, type TenantInvoices } from "./invoices";
@@ -61,12 +67,31 @@ export {
 } from "./modules";
 export type { ModuleCode };
 
+export {
+  FIC_MAX_AVAILABLE_COMPANIES,
+  hashFicOauthState,
+  type ConsumedFicOauthState,
+  type CreateFicConnectionInput,
+  type CreateFicConnectionResult,
+  type CreateFicOauthStateInput,
+  type FicCompanyChoice,
+  type FicConnection,
+  type FicConnectionStatus,
+  type SelectFicCompanyResult,
+  type TenantFicConnection,
+  type TenantFicOauthStates,
+} from "./fic";
+
 export interface TenantScope {
   /** The validated tenant ID every operation is bound to. */
   readonly tenantId: string;
   readonly users: TenantUsers;
   readonly modules: TenantModules;
   readonly invoices: TenantInvoices;
+  /** The tenant's Fatture in Cloud connection (at most one). */
+  readonly ficConnection: TenantFicConnection;
+  /** The tenant's pending OAuth authorization requests towards Fatture in Cloud. */
+  readonly ficOauthStates: TenantFicOauthStates;
   /** Same rule as the standalone `hasModule` (`@/db/entitlements`), bound to this tenant. */
   hasModule(code: ModuleCode, at?: Date): Promise<boolean>;
 }
@@ -90,6 +115,8 @@ export function forTenant(tenantId: string, db?: Database): TenantScope {
     users: Object.freeze(tenantUsers(database, id)),
     modules: Object.freeze(tenantModuleOperations(database, id)),
     invoices: Object.freeze(tenantInvoices(database, id)),
+    ficConnection: Object.freeze(tenantFicConnection(database, id)),
+    ficOauthStates: Object.freeze(tenantFicOauthStates(database, id)),
     hasModule: (code: ModuleCode, at?: Date) => hasModule(id, code, at, database),
   });
 }

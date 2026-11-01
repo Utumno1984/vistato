@@ -22,7 +22,7 @@ import { z } from "zod";
  */
 
 /** Closed list of what a secret may be used for. Later tickets may add entries. */
-export const SECRET_PURPOSES = ["fic_access_token", "fic_refresh_token"] as const;
+export const SECRET_PURPOSES = ["fic_access_token", "fic_refresh_token", "fic_pkce_verifier"] as const;
 export type SecretPurpose = (typeof SECRET_PURPOSES)[number];
 
 export interface SecretContext {
