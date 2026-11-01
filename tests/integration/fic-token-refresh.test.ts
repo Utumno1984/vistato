@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { POST as postConnect } from "@/app/api/integrations/fic/connect/route";
 import { DELETE as deleteIntegration, GET as getIntegration } from "@/app/api/integrations/fic/route";
 import { createSession } from "@/db/auth";
+import { getSql } from "@/db/client";
 import { requireTestDatabaseUrl } from "@/db/migrate";
 import { createTenant } from "@/db/platform/tenants";
 import { forTenant, type UserRole } from "@/db/tenant-scope";
@@ -13,6 +14,9 @@ import { decryptSecret, SecretDecryptionError } from "@/lib/crypto/secret-box";
 import {
   createFicAccessTokenProvider,
   FIC_ACCESS_TOKEN_REFRESH_MARGIN_MS,
+  FIC_MAX_CONCURRENT_RENEWALS,
+  FIC_RENEWAL_BACKOFF_MS,
+  FIC_RENEWAL_FAILURE_THRESHOLD,
   type FicAccessTokenDeps,
   FicNotConnectedError,
   FicReauthorizationRequiredError,
@@ -741,5 +745,141 @@ describe("schema of fic_connections after #59", () => {
       testSql()`update fic_connections set last_refresh_error = 'save_failed' where tenant_id = ${tenantId}`,
     ];
     for (const attempt of attempts) await expect(attempt).rejects.toMatchObject({ code: "23514" });
+  });
+});
+
+describe("getFicAccessToken: renewals do not take the database pool (review of #77)", () => {
+  it("10 tenants renewing while FiC is slow: an unrelated query on the pool does not wait for them", async () => {
+    const tenants: Awaited<ReturnType<typeof connectedTenant>>[] = [];
+    for (let i = 0; i < 10; i += 1) tenants.push(await connectedTenant());
+    for (const tenant of tenants) tenant.configure({ refreshDelayMs: 1000 });
+    const provider = createFicAccessTokenProvider();
+
+    const renewals = tenants.map((tenant) => provider(tenant.tenantId, deps(LATER)));
+    const calls = () => tenants.reduce((sum, tenant) => sum + fake.tokenCalls(tenant.state).refresh, 0);
+    await until(() => calls() >= FIC_MAX_CONCURRENT_RENEWALS);
+
+    const started = Date.now();
+    await getSql()`select 1`;
+    expect(Date.now() - started).toBeLessThan(500);
+    // At most the provider's slots are in use, each one waiting on FiC.
+    expect(calls()).toBe(FIC_MAX_CONCURRENT_RENEWALS);
+
+    const tokens = await Promise.all(renewals);
+    tenants.forEach((tenant, i) => expect(tokens[i]).toBe(fake.issuedTokens(tenant.state)!.accessToken));
+    expect(calls()).toBe(10);
+  }, 30_000);
+
+  it("a renewal that waits too long for a slot fails retryable (lock_timeout) and changes nothing", async () => {
+    const a = await connectedTenant();
+    const b = await connectedTenant();
+    a.configure({ refreshDelayMs: 500 });
+    const before = await row(b.tenantId);
+    const provider = createFicAccessTokenProvider({ maxConcurrentRenewals: 1, slotWaitMs: 50 });
+    const first = provider(a.tenantId, deps(LATER));
+    await until(() => fake.tokenCalls(a.state).refresh === 1);
+    const error = await provider(b.tenantId, deps(LATER)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(FicTokenRefreshUnavailableError);
+    expect(error).toMatchObject({ retryable: true, reason: "lock_timeout" });
+    expect(fake.tokenCalls(b.state).refresh).toBe(0);
+    expect(await row(b.tenantId)).toEqual(before);
+    expect(await first).toBe(fake.issuedTokens(a.state)!.accessToken);
+  });
+
+  it("after repeated temporary errors FiC is not asked again for a while: same retryable error, nothing changes; then it renews", async () => {
+    const { tenantId, state, configure } = await connectedTenant();
+    const other = await connectedTenant();
+    other.configure({ refresh: { status: 503 } });
+    configure({ refresh: { status: 503 } });
+    const provider = createFicAccessTokenProvider();
+    const before = await row(tenantId);
+
+    for (let i = 0; i < FIC_RENEWAL_FAILURE_THRESHOLD; i += 1) {
+      await expect(provider(tenantId, deps(LATER))).rejects.toBeInstanceOf(FicTokenRefreshUnavailableError);
+    }
+    expect(fake.tokenCalls(state).refresh).toBe(FIC_RENEWAL_FAILURE_THRESHOLD);
+
+    configure({});
+    const almost = new Date(LATER.getTime() + FIC_RENEWAL_BACKOFF_MS - 1);
+    const remembered = await provider(tenantId, deps(almost)).catch((e: unknown) => e);
+    expect(remembered).toBeInstanceOf(FicTokenRefreshUnavailableError);
+    expect(remembered).toMatchObject({ retryable: true, reason: "fic_server_error", httpStatus: 503 });
+    expect(fake.tokenCalls(state).refresh).toBe(FIC_RENEWAL_FAILURE_THRESHOLD);
+    expect(await row(tenantId)).toEqual(before);
+
+    // Another tenant is not affected by this tenant's memory.
+    await expect(provider(other.tenantId, deps(LATER))).rejects.toBeInstanceOf(FicTokenRefreshUnavailableError);
+    expect(fake.tokenCalls(other.state).refresh).toBe(1);
+
+    // Once the backoff is over, one call asks FiC again and renews.
+    const token = await provider(tenantId, deps(new Date(LATER.getTime() + FIC_RENEWAL_BACKOFF_MS)));
+    expect(token).toBe(fake.issuedTokens(state)!.accessToken);
+    expect(fake.tokenCalls(state).refresh).toBe(FIC_RENEWAL_FAILURE_THRESHOLD + 1);
+  });
+});
+
+describe("getFicAccessToken: notes of the review of #77", () => {
+  it("expires_in within the margin: 10 concurrent callers (10 providers) still cause one refresh only", async () => {
+    const { tenantId, state, configure } = await connectedTenant();
+    configure({ refreshDelayMs: 300, expiresIn: 30 });
+    const providers = Array.from({ length: 10 }, () => createFicAccessTokenProvider());
+    const tokens = await Promise.all(providers.map((provider) => provider(tenantId, deps(LATER))));
+    expect(fake.tokenCalls(state).refresh).toBe(1);
+    expect(new Set(tokens)).toEqual(new Set([fake.issuedTokens(state)!.accessToken]));
+  });
+
+  it("forceRefresh renews a token that is still valid (e.g. after a 401 from FiC)", async () => {
+    const { tenantId, state, issued } = await connectedTenant();
+    const token = await getFicAccessToken(tenantId, deps(T0, { forceRefresh: true }));
+    expect(token).not.toBe(issued.accessToken);
+    expect(token).toBe(fake.issuedTokens(state)!.accessToken);
+    expect(fake.tokenCalls(state).refresh).toBe(1);
+    expect(decryptAs(tenantId, (await row(tenantId)).access_token_enc, "fic_access_token")).toBe(token);
+    // Without the option the renewed token is used as it is.
+    expect(await getFicAccessToken(tenantId, deps(T0))).toBe(token);
+    expect(fake.tokenCalls(state).refresh).toBe(1);
+  });
+
+  it("save failed and the link deleted before it is dropped: FicNotConnectedError, not reauthorization", async () => {
+    const { tenantId, state, configure } = await connectedTenant();
+    configure({ refreshDelayMs: 500 });
+    await testSql().unsafe(`
+      CREATE OR REPLACE FUNCTION vistato_test_fail_token_save() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.tenant_id = '${tenantId}' AND NEW.status = 'connected'
+           AND NEW.access_token_enc IS DISTINCT FROM OLD.access_token_enc THEN
+          RAISE EXCEPTION 'simulated failure while saving the renewed tokens';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await testSql().unsafe(
+      `CREATE TRIGGER vistato_test_fail_token_save BEFORE UPDATE ON fic_connections
+       FOR EACH ROW EXECUTE FUNCTION vistato_test_fail_token_save()`,
+    );
+    const observer = postgres(requireTestDatabaseUrl(), { max: 1, onnotice: () => {} });
+    const unlinker = postgres(requireTestDatabaseUrl(), { max: 1, onnotice: () => {} });
+    try {
+      const renewal = getFicAccessToken(tenantId, deps(LATER)).catch((e: unknown) => e);
+      await until(() => fake.tokenCalls(state).refresh === 1);
+      // An unlink queued behind the renewal's lock: it deletes the row right after the failed save.
+      const unlink = unlinker.begin(async (tx) => {
+        await tx`select id from fic_connections where tenant_id = ${tenantId} for update`;
+        await tx`delete from fic_connections where tenant_id = ${tenantId}`;
+      });
+      await until(async () => {
+        const [{ waiting }] = await observer`
+          select count(*)::int as waiting from pg_stat_activity
+          where wait_event_type = 'Lock' and query ilike '%fic_connections%for update%'`;
+        return waiting > 0;
+      });
+      const error = await renewal;
+      await unlink;
+      expect(error).toBeInstanceOf(FicNotConnectedError);
+      expect(await row(tenantId)).toBeUndefined();
+    } finally {
+      await testSql().unsafe("DROP TRIGGER IF EXISTS vistato_test_fail_token_save ON fic_connections");
+      await testSql().unsafe("DROP FUNCTION IF EXISTS vistato_test_fail_token_save()");
+      await Promise.all([observer.end(), unlinker.end()]);
+    }
   });
 });

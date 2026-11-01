@@ -41,7 +41,18 @@ import { type FicOAuthConfig, readFicOAuthConfig, refreshAccessToken } from "./o
  * - FiC unavailable (5xx, timeout, network, 429, invalid answer) or the lock not obtained →
  *   nothing changes, {@link FicTokenRefreshUnavailableError} (retryable).
  * - FiC renewed the token but saving it failed → logged, `reauthorization_required` (the old
- *   refresh token may already be invalid), {@link FicReauthorizationRequiredError}.
+ *   refresh token may already be invalid), {@link FicReauthorizationRequiredError}; unless the
+ *   row changed meanwhile (e.g. the commit did go through, or an unlink): then the error of the
+ *   row as it is now (not connected, or retryable `save_conflict`).
+ * - Database pool: the lock is a transaction, so a renewal holds a pooled connection for the
+ *   whole FiC request (up to its timeout). A provider runs at most
+ *   {@link FIC_MAX_CONCURRENT_RENEWALS} renewals at a time (of different tenants; the others wait
+ *   for a slot without a connection, at most {@link FIC_RENEWAL_SLOT_WAIT_MS}): a slow or
+ *   unreachable FiC cannot take the whole pool from the rest of the application.
+ * - Backoff: after {@link FIC_RENEWAL_FAILURE_THRESHOLD} consecutive temporary failures of a
+ *   tenant, its calls fail at once with the same retryable error for
+ *   {@link FIC_RENEWAL_BACKOFF_MS} (injected clock), without asking FiC or the database lock.
+ *   Nothing is written. Then one call tries again; a success clears the memory.
  *
  * Tenant isolation: every read and write goes through `forTenant(tenantId)` (lock and updates
  * filter on `tenant_id`); the tokens are decrypted and encrypted with AAD = the tenant.
@@ -50,6 +61,15 @@ import { type FicOAuthConfig, readFicOAuthConfig, refreshAccessToken } from "./o
 
 /** A token expiring within this margin (boundary included) is renewed before use. */
 export const FIC_ACCESS_TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+/** Renewals (of different tenants) run at the same time by a provider: well below the pool (10). */
+export const FIC_MAX_CONCURRENT_RENEWALS = 3;
+/** Longest wait for a renewal slot before a retryable `lock_timeout`. */
+export const FIC_RENEWAL_SLOT_WAIT_MS = 30_000;
+/** Consecutive temporary failures of a tenant after which its renewals back off. */
+export const FIC_RENEWAL_FAILURE_THRESHOLD = 2;
+/** How long a tenant's renewals back off after repeated temporary failures. */
+export const FIC_RENEWAL_BACKOFF_MS = 15_000;
 
 /** OAuth error codes that mean Vistato's client is misconfigured, not that the grant is invalid. */
 const CLIENT_CONFIGURATION_ERRORS: ReadonlySet<string> = new Set([
@@ -81,7 +101,9 @@ export type FicTokenUnavailableReason =
   | "fic_network_error"
   | "fic_rate_limited"
   | "fic_invalid_response"
-  | "lock_timeout";
+  | "lock_timeout"
+  /** The renewed tokens were not saved, but the link was changed meanwhile by someone else. */
+  | "save_conflict";
 
 /** Temporary: the token could not be renewed now, nothing changed. Retry later. */
 export class FicTokenRefreshUnavailableError extends Error {
@@ -132,6 +154,22 @@ export interface FicAccessTokenDeps {
   /** Timeout of the renewal request (default the OAuth timeout, 15 s). */
   timeoutMs?: number;
   log?: FicLogger;
+  /**
+   * Renew even if the stored token is still valid (e.g. FiC answered 401 to it). A token
+   * renewed meanwhile by someone else is used instead of renewing again.
+   */
+  forceRefresh?: boolean;
+}
+
+export interface FicAccessTokenProviderOptions {
+  /** Default {@link FIC_MAX_CONCURRENT_RENEWALS}. */
+  maxConcurrentRenewals?: number;
+  /** Default {@link FIC_RENEWAL_SLOT_WAIT_MS}. */
+  slotWaitMs?: number;
+  /** Default {@link FIC_RENEWAL_FAILURE_THRESHOLD}. */
+  failureThreshold?: number;
+  /** Default {@link FIC_RENEWAL_BACKOFF_MS}. */
+  backoffMs?: number;
 }
 
 /**
@@ -207,7 +245,12 @@ type LockedOutcome =
   | { kind: "token"; token: string; renewed: true; rotated: boolean }
   | { kind: "reauthorization_required" };
 
-async function renewUnderLock(scope: Scope, deps: FicAccessTokenDeps): Promise<string> {
+/**
+ * @param seenAccessTokenEnc the access token the caller found before deciding to renew: under
+ *   the lock, a different one still valid has just been renewed by someone else and is used as it
+ *   is (even if its lifetime is within the margin, or with `forceRefresh`).
+ */
+async function renewUnderLock(scope: Scope, deps: FicAccessTokenDeps, seenAccessTokenEnc: string | null): Promise<string> {
   const log = deps.log ?? logFicEvent;
   const now = deps.now ?? (() => new Date());
   const config = oauthConfig(deps);
@@ -221,7 +264,11 @@ async function renewUnderLock(scope: Scope, deps: FicAccessTokenDeps): Promise<s
       assertUsable(tokens);
       const at = now();
       // Renewed meanwhile by the holder of the lock before us (another request or process).
-      if (isFresh(tokens, at)) {
+      const renewedByOther =
+        tokens.accessTokenEnc !== seenAccessTokenEnc &&
+        tokens.accessTokenExpiresAt !== null &&
+        tokens.accessTokenExpiresAt.getTime() > at.getTime();
+      if (renewedByOther || (!deps.forceRefresh && isFresh(tokens, at))) {
         const token = decrypt(scope, tokens.accessTokenEnc, "fic_access_token");
         if (token !== null) return { kind: "token", token, renewed: false };
       }
@@ -289,8 +336,26 @@ async function renewUnderLock(scope: Scope, deps: FicAccessTokenDeps): Promise<s
         error: errorName(error),
       });
       try {
-        await scope.ficConnection.requireReauthorizationIfUnchanged(progress.renewedFrom, "save_failed", progress.at);
+        const marked = await scope.ficConnection.requireReauthorizationIfUnchanged(
+          progress.renewedFrom,
+          "save_failed",
+          progress.at,
+        );
+        if (!marked) {
+          // Changed meanwhile (an unlink, a new link, or our commit did go through after all):
+          // the error of the row as it is now.
+          const current = await scope.ficConnection.readTokens();
+          assertUsable(current);
+          throw new FicTokenRefreshUnavailableError("save_conflict");
+        }
       } catch (markError) {
+        if (
+          markError instanceof FicNotConnectedError ||
+          markError instanceof FicReauthorizationRequiredError ||
+          markError instanceof FicTokenRefreshUnavailableError
+        ) {
+          throw markError;
+        }
         log({
           level: "error",
           event: "fic_token_reauthorization_not_saved",
@@ -316,11 +381,36 @@ async function renewUnderLock(scope: Scope, deps: FicAccessTokenDeps): Promise<s
 }
 
 /**
- * A provider with its own in-process sharing of renewals (one per process in production:
- * {@link getFicAccessToken}). Tests create several to play the part of several processes.
+ * A provider with its own in-process sharing of renewals, renewal slots and failure memory (one
+ * per process in production: {@link getFicAccessToken}). Tests create several to play the part
+ * of several processes.
  */
-export function createFicAccessTokenProvider(): FicAccessTokenProvider {
+export function createFicAccessTokenProvider(options: FicAccessTokenProviderOptions = {}): FicAccessTokenProvider {
   const renewals = new Map<string, Promise<string>>();
+  const failures = new Map<string, FailureMemory>();
+  const slots = createSlots(
+    options.maxConcurrentRenewals ?? FIC_MAX_CONCURRENT_RENEWALS,
+    options.slotWaitMs ?? FIC_RENEWAL_SLOT_WAIT_MS,
+  );
+  const threshold = options.failureThreshold ?? FIC_RENEWAL_FAILURE_THRESHOLD;
+  const backoffMs = options.backoffMs ?? FIC_RENEWAL_BACKOFF_MS;
+
+  async function renew(key: string, scope: Scope, deps: FicAccessTokenDeps, seen: string | null): Promise<string> {
+    const now = deps.now ?? (() => new Date());
+    try {
+      const token = await slots.run(() => renewUnderLock(scope, deps, seen));
+      failures.delete(key);
+      return token;
+    } catch (error) {
+      if (error instanceof FicTokenRefreshUnavailableError && isFicFailure(error)) {
+        const count = (failures.get(key)?.count ?? 0) + 1;
+        failures.set(key, { count, error, until: count >= threshold ? now().getTime() + backoffMs : undefined });
+      } else {
+        failures.delete(key);
+      }
+      throw error;
+    }
+  }
 
   return async (tenantId, deps = {}) => {
     const scope = forTenant(tenantId);
@@ -328,7 +418,7 @@ export function createFicAccessTokenProvider(): FicAccessTokenProvider {
 
     const stored = await scope.ficConnection.readTokens();
     assertUsable(stored);
-    if (isFresh(stored, now())) {
+    if (!deps.forceRefresh && isFresh(stored, now())) {
       const token = decrypt(scope, stored.accessTokenEnc, "fic_access_token");
       if (token !== null) return token;
       // Not decryptable (e.g. wrong key): the renewal decides, with the refresh token.
@@ -337,11 +427,70 @@ export function createFicAccessTokenProvider(): FicAccessTokenProvider {
     const key = scope.tenantId.toLowerCase();
     let renewal = renewals.get(key);
     if (!renewal) {
-      renewal = renewUnderLock(scope, deps).finally(() => renewals.delete(key));
+      const failed = failures.get(key);
+      if (failed?.until !== undefined && now().getTime() < failed.until) {
+        // FiC failed repeatedly just now: do not ask it again (nor take the lock) yet.
+        throw new FicTokenRefreshUnavailableError(failed.error.reason, failed.error.httpStatus);
+      }
+      renewal = renew(key, scope, deps, stored.accessTokenEnc).finally(() => renewals.delete(key));
       renewals.set(key, renewal);
     }
     return renewal;
   };
+}
+
+/** A temporary failure of FiC itself (not of the lock or of a concurrent change). */
+function isFicFailure(error: FicTokenRefreshUnavailableError): boolean {
+  return error.reason !== "lock_timeout" && error.reason !== "save_conflict";
+}
+
+/** A counting semaphore whose waiters hold no connection and give up after `waitMs`. */
+function createSlots(max: number, waitMs: number) {
+  let used = 0;
+  const waiting: (() => void)[] = [];
+
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next();
+    else used -= 1;
+  };
+
+  const acquire = (): Promise<void> => {
+    if (used < max) {
+      used += 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const index = waiting.indexOf(grant);
+        if (index >= 0) waiting.splice(index, 1);
+        reject(new FicTokenRefreshUnavailableError("lock_timeout"));
+      }, waitMs);
+      waiting.push(grant);
+    });
+  };
+
+  return {
+    async run<T>(fn: () => Promise<T>): Promise<T> {
+      await acquire();
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    },
+  };
+}
+
+interface FailureMemory {
+  count: number;
+  error: FicTokenRefreshUnavailableError;
+  /** Until when (epoch ms) the tenant's renewals fail at once; set from the threshold on. */
+  until?: number;
 }
 
 const defaultProvider = createFicAccessTokenProvider();
