@@ -151,21 +151,48 @@ function withoutControlCharacters(text: string): string {
   return out;
 }
 
+/** Shortest secret part (after a short `a/`-style prefix) redacted on its own. */
+const MIN_SECRET_PART = 8;
+
+/**
+ * Forms in which FiC may echo the token: literal, with `/` escaped as `\/` (PHP
+ * `json_encode`), URL-encoded (upper- and lower-case hex) and, for tokens shaped like
+ * `a/<secret>`, the secret part alone (covers any other encoding of the prefix).
+ * Longest first, so that a longer form is redacted before a form it contains.
+ */
+function tokenVariants(token: string): string[] {
+  const encoded = encodeURIComponent(token);
+  const variants = new Set([token, token.replaceAll("/", "\\/"), encoded, encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase())]);
+  const secret = /^[^/]{1,8}\/(.+)$/.exec(token)?.[1];
+  if (secret && secret.length >= MIN_SECRET_PART) {
+    variants.add(secret);
+    variants.add(encodeURIComponent(secret));
+  }
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+
 /**
  * Makes a FiC response body safe for an error: control characters become spaces, the
- * token and every `Bearer <value>` are redacted, a token prefix left at the end by the
- * cut is redacted too, and the result is at most {@link FIC_BODY_EXCERPT_MAX_BYTES}.
+ * token (in every form of {@link tokenVariants}) and every `Bearer <value>` are redacted,
+ * a token prefix left at the end by the cut is redacted too, and the result is at most
+ * {@link FIC_BODY_EXCERPT_MAX_BYTES}.
  */
 export function redactExcerpt(text: string, token: string | undefined): string {
   let excerpt = truncateUtf8(withoutControlCharacters(text), FIC_BODY_EXCERPT_MAX_BYTES);
   if (token) {
-    excerpt = excerpt.split(token).join(REDACTED);
-    for (let k = Math.min(token.length - 1, excerpt.length); k >= MIN_PARTIAL_TOKEN; k--) {
-      if (excerpt.endsWith(token.slice(0, k))) {
-        excerpt = excerpt.slice(0, -k) + REDACTED;
-        break;
+    const variants = tokenVariants(token);
+    for (const variant of variants) excerpt = excerpt.split(variant).join(REDACTED);
+    // The cut may leave the start of any form at the end: redact the longest such prefix.
+    let cut = 0;
+    for (const variant of variants) {
+      for (let k = Math.min(variant.length - 1, excerpt.length); k >= MIN_PARTIAL_TOKEN && k > cut; k--) {
+        if (excerpt.endsWith(variant.slice(0, k))) {
+          cut = k;
+          break;
+        }
       }
     }
+    if (cut > 0) excerpt = excerpt.slice(0, -cut) + REDACTED;
   }
   excerpt = excerpt.replace(/\bBearer\s+\S+/gi, `Bearer ${REDACTED}`);
   // Redaction may have made it longer: cut again (cutting only removes text, never reveals it).
