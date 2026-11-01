@@ -30,6 +30,8 @@ jobs:
       DEMO_USER_PASSWORD: ci-demo-password-not-a-secret
       SESSION_COOKIE_SECURE: "false"
       APP_ORIGIN: http://localhost:3100
+      # Fake test key (base64 of "ci-test-key-not-a-secret-0000000"), never used outside CI.
+      SECRETS_ENCRYPTION_KEY: Y2ktdGVzdC1rZXktbm90LWEtc2VjcmV0LTAwMDAwMDA=
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
