@@ -71,6 +71,18 @@ describe("ci workflow: test-guard job", () => {
   });
 });
 
+describe("ci workflow: check job", () => {
+  it("sets a well-formed, fake SECRETS_ENCRYPTION_KEY for the check job", () => {
+    const match = jobBlock("check").match(/^\s+SECRETS_ENCRYPTION_KEY: (\S+)$/m);
+    expect(match).not.toBeNull();
+    const key = Buffer.from(match![1], "base64");
+    expect(key).toHaveLength(32);
+    expect(key.toString("base64")).toBe(match![1]);
+    expect(key.toString("utf8")).toBe("ci-test-key-not-a-secret-0000000");
+    expect(jobBlock("check")).not.toContain("secrets.");
+  });
+});
+
 describe("pull request template", () => {
   const template = readFileSync(join(root, ".github/pull_request_template.md"), "utf8");
 

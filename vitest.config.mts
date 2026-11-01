@@ -1,7 +1,13 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  resolve: { alias: { "@": new URL("./src", import.meta.url).pathname } },
+  resolve: {
+    alias: {
+      "@": new URL("./src", import.meta.url).pathname,
+      // Next resolves `server-only` to a no-op on the server; tests run server code, so do the same.
+      "server-only": new URL("./node_modules/server-only/empty.js", import.meta.url).pathname,
+    },
+  },
   test: {
     environment: "node",
     setupFiles: ["tests/setup.ts"],
