@@ -287,10 +287,50 @@ describe("forTenant(t).modules", () => {
   });
 });
 
+describe("hasModule for fic_iban_alert", () => {
+  it("is false without the module, true after activation and false again after cancellation", async () => {
+    expect(await has(tenantA, "fic_iban_alert")).toBe(false);
+    await activate(tenantA, "fic_iban_alert", PAST);
+    expect(await has(tenantA, "fic_iban_alert")).toBe(true);
+    await scope(tenantA).modules.cancel("fic_iban_alert");
+    expect(await has(tenantA, "fic_iban_alert")).toBe(false);
+  });
+
+  it("is false for tenant B when fic_iban_alert is active on tenant A", async () => {
+    await activate(tenantA, "fic_iban_alert", PAST);
+    expect(await has(tenantA, "fic_iban_alert")).toBe(true);
+    expect(await has(tenantB, "fic_iban_alert")).toBe(false);
+  });
+});
+
 describe("module catalogue (cross-tenant)", () => {
+  it("lists the 5 modules, fic_iban_alert included as a paid module", async () => {
+    const catalog = await listModuleCatalog(testDb());
+    expect(catalog.map((m) => m.code)).toEqual([
+      "approvals",
+      "cost_centers",
+      "fic_iban_alert",
+      "payment_schedule",
+      "purchase_orders",
+    ]);
+    expect(await getModuleByCode("fic_iban_alert", testDb())).toEqual({
+      code: "fic_iban_alert",
+      name: "Alert cambio IBAN fornitori (Fatture in Cloud)",
+      description: expect.stringMatching(/IBAN/),
+      isBase: false,
+    });
+  });
+
+  // Name kept for the test guard: since ticket #56 the catalogue has 5 modules (fic_iban_alert added).
   it("lists the 4 modules with code, name, description and isBase", async () => {
     const catalog = await listModuleCatalog(testDb());
-    expect(catalog.map((m) => m.code)).toEqual(["approvals", "cost_centers", "payment_schedule", "purchase_orders"]);
+    expect(catalog.map((m) => m.code)).toEqual([
+      "approvals",
+      "cost_centers",
+      "fic_iban_alert",
+      "payment_schedule",
+      "purchase_orders",
+    ]);
     for (const m of catalog) {
       expect(Object.keys(m).sort()).toEqual(["code", "description", "isBase", "name"]);
     }
