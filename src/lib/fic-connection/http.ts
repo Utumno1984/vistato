@@ -10,6 +10,8 @@ import { FIC_SETTINGS_PATH, ficSettingsUrl } from "./outcomes";
 import { loadFicIntegrationResource } from "./resource";
 import {
   completeFicConnection,
+  disconnectFic,
+  type FicDisconnectDeps,
   FicNotConfiguredError,
   selectFicCompany,
   startFicConnection,
@@ -18,7 +20,7 @@ import {
 
 /**
  * The `/api/integrations/fic/*` endpoints. Order of the checks, for every endpoint: session
- * (401; the callback redirects to the login instead), origin of a POST (403
+ * (401; the callback redirects to the login instead), origin of a POST or DELETE (403
  * `forbidden_origin`), module `fic_iban_alert` (403 `module_not_active`), role for the
  * actions (403 `forbidden`: OWNER and ADMIN only), then the request itself.
  */
@@ -42,6 +44,21 @@ function notConfigured(): Response {
 export async function getFicIntegration(request: Request): Promise<Response> {
   const auth = await guard(request, "read");
   if (auth instanceof Response) return auth;
+  const access = await ficIbanAlertAccess(auth);
+  return Response.json(await loadFicIntegrationResource(auth.scope, access), { headers: NO_STORE });
+}
+
+/**
+ * `DELETE /api/integrations/fic`: unlinks the account (OWNER/ADMIN), in any state of the link.
+ * 200 with the resource, now `not_connected`; 409 `not_connected` when there is no link.
+ */
+export async function deleteFicIntegration(request: Request, deps: FicDisconnectDeps = {}): Promise<Response> {
+  const auth = await guard(request, "manage");
+  if (auth instanceof Response) return auth;
+  const result = await disconnectFic(auth, deps);
+  if (result.outcome === "not_connected") {
+    return errorResponse(409, "not_connected", "La tua azienda non è collegata a Fatture in Cloud");
+  }
   const access = await ficIbanAlertAccess(auth);
   return Response.json(await loadFicIntegrationResource(auth.scope, access), { headers: NO_STORE });
 }

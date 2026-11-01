@@ -14,6 +14,21 @@ export const FIC_SELECT_COMPANY_LINK: Link = {
   method: "POST",
   title: "Scegli l'azienda da collegare",
 };
+export const FIC_DISCONNECT_LINK: Link = {
+  href: "/api/integrations/fic",
+  method: "DELETE",
+  title: "Scollega Fatture in Cloud",
+};
+
+/**
+ * Whether the tenant's connection prevents a new authorization: a complete one or one waiting
+ * for the choice of the company does; none, or one in `reauthorization_required` (no token
+ * left: the new link replaces it), does not. The rule of `POST connect`, of the callback and
+ * of the `connect` link.
+ */
+export function blocksNewLink(connection: Pick<FicConnection, "status"> | null): boolean {
+  return connection !== null && connection.status !== "reauthorization_required";
+}
 
 /** What the API calls the state of the link ("not_connected" = no connection row). */
 export type FicIntegrationStatus = "not_connected" | FicConnection["status"];
@@ -26,9 +41,11 @@ export interface FicConnectedBy {
 
 /**
  * The single source of the Fatture in Cloud integration resource and of its links. Built
- * from an explicit list of fields: no token, verifier or state can ever be in it. `connect`
- * and `select-company` follow `ficIbanAlertAccess(...).canManage` (the rule of the
- * endpoints) and the state the endpoints require.
+ * from an explicit list of fields: no token, verifier or state can ever be in it. `connect`,
+ * `select-company` and `disconnect` follow `ficIbanAlertAccess(...).canManage` (the rule of
+ * the endpoints) and the state the endpoints require: `connect` with no link or one to
+ * authorize again (`blocksNewLink`), `disconnect` with any link (`DELETE` answers 409 only
+ * without one). In `reauthorization_required` the company that was linked is still shown.
  */
 export function toFicIntegrationResource(
   connection: FicConnection | null,
@@ -37,11 +54,12 @@ export function toFicIntegrationResource(
 ) {
   const status: FicIntegrationStatus = connection?.status ?? "not_connected";
   const connected = connection?.status === "connected";
+  const hasCompany = connected || connection?.status === "reauthorization_required";
   return resource(
     {
       status,
-      companyId: connected ? connection.companyId : null,
-      companyName: connected ? connection.companyName : null,
+      companyId: hasCompany ? connection.companyId : null,
+      companyName: hasCompany ? connection.companyName : null,
       connectedAt: connected && connection.connectedAt ? connection.connectedAt.toISOString() : null,
       connectedBy: connected ? connectedBy : null,
       companies:
@@ -51,12 +69,13 @@ export function toFicIntegrationResource(
     },
     buildLinks([
       { rel: "self", link: FIC_INTEGRATION_LINK, allowed: true },
-      { rel: "connect", link: FIC_CONNECT_LINK, allowed: access.canManage && status === "not_connected" },
+      { rel: "connect", link: FIC_CONNECT_LINK, allowed: access.canManage && !blocksNewLink(connection) },
       {
         rel: "select-company",
         link: FIC_SELECT_COMPANY_LINK,
         allowed: access.canManage && status === "pending_company_selection",
       },
+      { rel: "disconnect", link: FIC_DISCONNECT_LINK, allowed: access.canManage && connection !== null },
     ]),
   );
 }

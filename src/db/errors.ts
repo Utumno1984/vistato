@@ -76,8 +76,25 @@ export class UserNotInTenantError extends Error {
   }
 }
 
+/** A row lock was not obtained within the transaction's `lock_timeout`: nothing was changed. */
+export class LockTimeoutError extends Error {
+  constructor() {
+    super("Timed out waiting for a row lock");
+    this.name = "LockTimeoutError";
+  }
+}
+
 const UNIQUE_VIOLATION = "23505";
 const FOREIGN_KEY_VIOLATION = "23503";
+const LOCK_NOT_AVAILABLE = "55P03";
+
+/** True when `error` (or its `cause` chain) is Postgres `lock_not_available` (lock_timeout, NOWAIT). */
+export function isLockNotAvailable(error: unknown): boolean {
+  for (let e: unknown = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    if ((e as { code?: unknown }).code === LOCK_NOT_AVAILABLE) return true;
+  }
+  return false;
+}
 
 /**
  * True when `error` (or any error in its `cause` chain: Drizzle wraps driver

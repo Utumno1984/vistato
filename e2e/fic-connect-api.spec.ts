@@ -205,11 +205,12 @@ test("full flow with one company in the browser: connected, no secret in the res
   expect(body).toMatchObject({ status: "connected", companyId: only.id, companyName: only.name, companies: null });
   expect(body.connectedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   expect(body.connectedBy).toEqual({ id: ownerUser.id, firstName: "E2E", lastName: "OWNER" });
-  expect(Object.keys(body._links)).toEqual(["self"]);
+  // #59: an OWNER can now also unlink (disconnect); a USER still gets only self.
+  expect(Object.keys(body._links)).toEqual(["self", "disconnect"]);
   for (const secret of ["a/fake-", "r/fake-", "access", "refresh", "token", "verifier", state]) {
     expect(text.toLowerCase(), secret).not.toContain(secret.toLowerCase());
   }
-  expect(await resourceOf(user)).toEqual(body);
+  expect(await resourceOf(user)).toEqual({ ...body, _links: { self: body._links.self } });
 
   const again = await owner.post("/api/integrations/fic/connect");
   expect(again.status()).toBe(409);
@@ -252,7 +253,8 @@ test("two companies: pending with the list and select-company; an unknown id is 
   const connected = await chosen.json();
   expect(connected).toMatchObject({ status: "connected", companyId: second.id, companyName: second.name, companies: null });
   expect(connected.connectedBy.id).toBe(userOf(tenant, "OWNER").id);
-  expect(await resourceOf(user)).toEqual(connected);
+  // #59: the ADMIN's resource has disconnect too; the USER's the same data with self only.
+  expect(await resourceOf(user)).toEqual({ ...connected, _links: { self: connected._links.self } });
 
   const twice = await owner.post("/api/integrations/fic/company", { data: { companyId: first.id } });
   expect(twice.status()).toBe(409);

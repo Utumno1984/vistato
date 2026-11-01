@@ -98,6 +98,23 @@ export class FicServerError extends FicError {}
 /** Any other unexpected status (other 4xx, 3xx: redirects are never followed). */
 export class FicHttpError extends FicError {}
 
+/**
+ * A 4xx (or 3xx) of an OAuth endpoint (`/oauth/token`, revocation), with the RFC 6749 `error`
+ * code of the body when it had one (e.g. `invalid_grant`): a short code, never a secret.
+ */
+export class FicOAuthHttpError extends FicHttpError {
+  readonly oauthError?: string;
+
+  constructor(message: string, details: FicErrorDetails & { oauthError?: string } = {}) {
+    super(message, details);
+    this.oauthError = details.oauthError;
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), oauthError: this.oauthError };
+  }
+}
+
 /** The connection failed (DNS, refused, reset) before a complete response. */
 export class FicNetworkError extends FicError {
   /** Low-level error code (e.g. `ECONNREFUSED`), when available. */

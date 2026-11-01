@@ -27,6 +27,7 @@ export default defineConfig({
       FIC_API_BASE_URL: FAKE_FIC_URL,
       FIC_OAUTH_AUTHORIZE_URL: `${FAKE_FIC_URL}/oauth/authorize`,
       FIC_OAUTH_TOKEN_URL: `${FAKE_FIC_URL}/oauth/token`,
+      FIC_OAUTH_REVOKE_URL: `${FAKE_FIC_URL}/oauth/revoke`,
       FIC_CLIENT_ID: FAKE_FIC_CLIENT_ID,
       FIC_CLIENT_SECRET: FAKE_FIC_CLIENT_SECRET,
       FIC_REDIRECT_URI: `http://localhost:${PORT}/api/integrations/fic/callback`,
