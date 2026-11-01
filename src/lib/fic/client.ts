@@ -40,7 +40,9 @@ import {
  * database: the caller passes the access token and the FiC company id (tenant isolation is
  * the caller's job, reading the token through `forTenant(...)`).
  *
- * - Base URL from `FIC_API_BASE_URL` (default {@link FIC_DEFAULT_BASE_URL}), http(s) only.
+ * - Base URL from `FIC_API_BASE_URL` (default {@link FIC_DEFAULT_BASE_URL}): https, or
+ *   plain http only towards localhost (fake FiC in tests and e2e).
+ * - A request body is serialised once before any attempt; a GET never has one.
  * - Per-company limit ({@link SlidingWindowRateLimiter}) shared by the whole process.
  * - Retries: 429 honouring `Retry-After` (capped at {@link FIC_MAX_RETRY_AFTER_MS});
  *   5xx, network errors and timeouts only for idempotent requests (GET), with growing
@@ -105,8 +107,11 @@ export interface FicClient {
   request<Schema extends z.ZodType>(request: FicRequest<Schema>): Promise<z.output<Schema>>;
 }
 
+/** Hosts for which a plain `http:` base URL is accepted. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
- * Validates and normalises a base URL: http(s), no credentials, no query or fragment,
+ * Validates and normalises a base URL: https (http only for loopback hosts), no credentials, no query or fragment,
  * no trailing slash (so `https://x/` and `https://x` give the same request URLs).
  */
 export function normalizeBaseUrl(raw: string): string {
@@ -118,6 +123,11 @@ export function normalizeBaseUrl(raw: string): string {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new FicConfigError("FIC_API_BASE_URL must be an http(s) URL");
+  }
+  // Plain http only towards this machine (a fake FiC in tests and e2e): the token must
+  // never travel unencrypted over a network.
+  if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(url.hostname)) {
+    throw new FicConfigError("FIC_API_BASE_URL must use https (http is allowed only for localhost)");
   }
   if (url.username !== "" || url.password !== "") {
     throw new FicConfigError("FIC_API_BASE_URL must not contain credentials");
@@ -201,6 +211,21 @@ function assertPath(path: unknown): asserts path is string {
   }
 }
 
+/** JSON text of the request body; a GET has none. */
+function serializeBody(method: FicHttpMethod, body: unknown): string | undefined {
+  if (body === undefined) return undefined;
+  if (method === "GET") throw new FicInvalidArgumentError("FiC GET requests have no body");
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(body);
+  } catch {
+    // BigInt, circular structure, throwing toJSON: the value itself is never echoed.
+    throw new FicInvalidArgumentError("FiC request body is not serialisable to JSON");
+  }
+  if (json === undefined) throw new FicInvalidArgumentError("FiC request body is not serialisable to JSON");
+  return json;
+}
+
 function isJsonContentType(value: string | null): boolean {
   if (!value) return false;
   const mediaType = value.split(";")[0].trim().toLowerCase();
@@ -280,7 +305,7 @@ export function createFicClient(options: FicClientOptions = {}): FicClient {
     method: FicHttpMethod,
     path: string,
     token: string,
-    body: unknown,
+    body: string | undefined,
     attempts: number,
   ): Promise<RawResponse> {
     const controller = new AbortController();
@@ -291,7 +316,7 @@ export function createFicClient(options: FicClientOptions = {}): FicClient {
       const response = await doFetch(`${baseUrl}${path}`, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body,
         redirect: "manual",
         signal: controller.signal,
         cache: "no-store",
@@ -308,6 +333,9 @@ export function createFicClient(options: FicClientOptions = {}): FicClient {
           timeoutMs,
         });
       }
+      // fetch reports network failures (connection refused or dropped, DNS, TLS, body
+      // cut short) as TypeError: anything else is a bug, rethrown as is and never retried.
+      if (!(error instanceof TypeError)) throw error;
       const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
       const code = typeof cause?.code === "string" ? cause.code : undefined;
       throw new FicNetworkError(`FiC ${method} ${path}: network error${code ? ` (${code})` : ""}`, {
@@ -362,6 +390,9 @@ export function createFicClient(options: FicClientOptions = {}): FicClient {
     assertPath(path);
     if (companyId !== undefined) assertCompanyId(companyId);
     const idempotent = method === "GET";
+    // Serialised once, before any attempt: a body that cannot be sent is the caller's
+    // error (typed, never retried), not a network error.
+    const payload = serializeBody(method, body);
 
     for (let attempt = 1; ; attempt++) {
       const last = attempt >= maxAttempts;
@@ -369,7 +400,7 @@ export function createFicClient(options: FicClientOptions = {}): FicClient {
 
       let raw: RawResponse;
       try {
-        raw = await send(method, path, token, body, attempt);
+        raw = await send(method, path, token, payload, attempt);
       } catch (error) {
         if (!(error instanceof FicError)) throw error;
         if (!idempotent || last) throw error;

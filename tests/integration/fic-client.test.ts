@@ -658,3 +658,106 @@ describe("FiC client: no secrets in errors", () => {
     expect(error.bodyExcerpt).toBe("line1  line2  [31m end");
   });
 });
+
+describe("FiC client: token echoed in other encodings", () => {
+  /** The part of the token after `a/`: no rendering may contain any piece of it. */
+  const SECRET = TOKEN.slice(2);
+  const ESCAPED = TOKEN.replaceAll("/", "\\/"); // PHP json_encode
+  const ENCODED = encodeURIComponent(TOKEN); // a%2F...
+
+  function expectNoSecretPart(error: FicError) {
+    for (const text of renderings(error)) {
+      expect(text).not.toContain(SECRET.slice(0, 12));
+      expect(text).not.toContain(SECRET.slice(-12));
+    }
+  }
+
+  /** Sends `body` verbatim (no JSON.stringify, which would not escape `/`). */
+  const verbatim =
+    (code: number, body: string): Handler =>
+    (_req, res) => {
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(body);
+    };
+
+  it("redacts a token echoed with an escaped slash (a\\/...) or URL-encoded (a%2F...)", async () => {
+    expect(ENCODED).toContain("%2F");
+    const errors: FicError[] = [];
+    handler = verbatim(401, `{"error":{"message":"token ${ESCAPED} refused"}}`);
+    errors.push(await caught(fic().listCompanies(TOKEN)));
+    handler = verbatim(403, `{"error":{"url":"/oauth?access_token=${ENCODED}&x=1"}}`);
+    errors.push(await caught(fic().getCompanyInfo(TOKEN, 1)));
+    handler = verbatim(500, `{"lower":"${ENCODED.replace("%2F", "%2f")}"}`);
+    errors.push(await caught(fic({ maxAttempts: 1 }).listCompanies(TOKEN)));
+    handler = verbatim(429, `{"secret_only":"${SECRET}"}`);
+    errors.push(await caught(fic({ maxAttempts: 1 }).listCompanies(TOKEN)));
+    for (const error of errors) {
+      expectNoSecretPart(error);
+      expect(error.bodyExcerpt).toContain("[REDACTED]");
+    }
+  });
+
+  it("redacts an escaped or URL-encoded token cut in half at the 1 KB limit", async () => {
+    for (const form of [ESCAPED, ENCODED]) {
+      handler = verbatim(500, "x".repeat(1024 - 14) + form);
+      const error = await caught(fic({ maxAttempts: 1 }).listCompanies(TOKEN));
+      expect(error.bodyExcerpt?.endsWith("[REDACTED]")).toBe(true);
+      expect(error.bodyExcerpt).not.toContain(form.slice(0, 14));
+      expect(Buffer.byteLength(error.bodyExcerpt ?? "", "utf8")).toBeLessThanOrEqual(1024);
+    }
+  });
+});
+
+describe("FiC client: request body", () => {
+  const schema = z.object({ ok: z.boolean() });
+
+  it("refuses a body on a GET before any request", async () => {
+    handler = ok({ ok: true });
+    const error = await caught(fic().request({ method: "GET", path: "/c/1/x", token: TOKEN, schema, body: { a: 1 } }));
+    expect(error).toBeInstanceOf(FicInvalidArgumentError);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("refuses a body that is not serialisable to JSON, without requests or retries", async () => {
+    handler = ok({ ok: true });
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    for (const body of [{ amount: BigInt(10) }, circular, () => 1]) {
+      const error = await caught(fic().request({ method: "POST", path: "/c/1/x", token: TOKEN, schema, body }));
+      expect(error).toBeInstanceOf(FicInvalidArgumentError);
+      expect(error).not.toBeInstanceOf(FicNetworkError);
+    }
+    expect(requests).toHaveLength(0);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("does not turn a non-network failure into FicNetworkError nor retry it", async () => {
+    const bug = new RangeError("bug inside the fetch implementation");
+    let calls = 0;
+    const client = fic({
+      fetch: async () => {
+        calls++;
+        throw bug;
+      },
+    });
+    await expect(client.listCompanies(TOKEN)).rejects.toBe(bug);
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+});
+
+describe("FiC client: plain http only towards localhost", () => {
+  it.each(["http://api-v2.fattureincloud.it", "http://10.0.0.5:8080", "http://fake-fic:4010", "http://127.0.0.2"])(
+    "refuses the plain http base URL %s",
+    (url) => {
+      expect(() => fic({ baseUrl: url })).toThrow(FicConfigError);
+      expect(() => readFicConfig({ FIC_API_BASE_URL: url })).toThrow(FicConfigError);
+    },
+  );
+
+  it("accepts plain http on localhost, 127.0.0.1 and [::1], and https anywhere", () => {
+    for (const url of ["http://localhost:4010", "http://127.0.0.1:4010/", "http://[::1]:4010", "https://fake-fic.example.com"]) {
+      expect(() => fic({ baseUrl: url })).not.toThrow();
+    }
+  });
+});
