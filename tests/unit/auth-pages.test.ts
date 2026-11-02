@@ -87,6 +87,6 @@ describe("proxy", () => {
   });
 
   it("matches only /fatture and below: not /, /login, /api", () => {
-    expect(config.matcher).toEqual(["/fatture", "/fatture/:path*"]);
+    expect(config.matcher).toEqual(["/fatture", "/fatture/:path*", "/impostazioni/:path*"]);
   });
 });

@@ -32,4 +32,4 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
-export const config = { matcher: ["/fatture", "/fatture/:path*"] };
+export const config = { matcher: ["/fatture", "/fatture/:path*", "/impostazioni/:path*"] };
